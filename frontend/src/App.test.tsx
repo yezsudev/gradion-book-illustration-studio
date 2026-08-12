@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
 import App from "./App";
 
@@ -238,6 +238,25 @@ test("validates that a new project has a title and one book source", async () =>
   fireEvent.click(screen.getByRole("button", { name: "Create project" }));
 
   expect(screen.getByRole("alert")).toHaveTextContent("Enter a project title.");
+});
+
+test("imports selected txt content into the book text area and can remove the file", async () => {
+  vi.stubGlobal("fetch", vi.fn((url: string) => {
+    if (url === "/api/session") return Promise.resolve({ ok: true, status: 200, json: async () => ({ name: "Mira", email: "mira@example.com" }) });
+    if (url === "/api/projects") return Promise.resolve({ ok: true, status: 200, json: async () => [] });
+    if (url === "/api/health") return Promise.resolve({ ok: true, status: 200, json: async () => ({ status: "ok" }) });
+    return Promise.reject(new Error(`Unexpected request: ${url}`));
+  }));
+  render(<App />);
+  await screen.findByRole("button", { name: "Create project" });
+  fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+  const file = new File(["Imported book content"], "book.txt", { type: "text/plain" });
+  fireEvent.change(screen.getByLabelText("Upload .txt file"), { target: { files: [file] } });
+  await waitFor(() => expect(screen.getByLabelText("Paste book text")).toHaveValue("Imported book content"));
+  expect(screen.getByRole("button", { name: "Remove file" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Remove file" }));
+  expect(screen.getByLabelText("Paste book text")).toHaveValue("");
+  expect(screen.queryByRole("button", { name: "Remove file" })).not.toBeInTheDocument();
 });
 
 test("shows creation loading while a new project is being saved", async () => {
@@ -544,7 +563,7 @@ test("shows a spinner while a step request is still running", async () => {
   expect(
     await screen.findByRole("button", { name: /Style is running/ }),
   ).toBeDisabled();
-  expect(screen.getByRole("status")).toHaveTextContent("Running Style");
+  expect(screen.getByRole("status")).toHaveTextContent("Style is running");
 });
 
 test("opens the project detail named by the URL after refresh", async () => {
@@ -740,7 +759,7 @@ test("shows CHAPTERS running state", async () => {
 
   render(<App />);
   await openProject();
-  expect(screen.getByText(/Chapters is running/)).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("Chapters is running");
 });
 
 test("shows CHAPTERS failed state with retry action", async () => {

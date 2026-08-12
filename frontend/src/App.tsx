@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   createProject,
   createSession,
@@ -63,6 +63,16 @@ function createdDate(value: string) {
   );
 }
 
+function readFileText(file: File): Promise<string> {
+  if (typeof file.text === "function") return file.text();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Could not read file."));
+    reader.readAsText(file);
+  });
+}
+
 export default function App() {
   const [user, setUser] = useState<Identity | null | undefined>(undefined);
   const [name, setName] = useState("");
@@ -80,6 +90,8 @@ export default function App() {
   const [title, setTitle] = useState("");
   const [bookText, setBookText] = useState("");
   const [bookFile, setBookFile] = useState<File | null>(null);
+  const [importedBookText, setImportedBookText] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [createError, setCreateError] = useState("");
   const [creating, setCreating] = useState(false);
   const [stepAction, setStepAction] = useState<ProjectStep["key"] | null>(null);
@@ -171,7 +183,7 @@ export default function App() {
   async function create(event: FormEvent) {
     event.preventDefault();
     const projectTitle = title.trim();
-    const pastedText = bookText.trim();
+    const pastedText = bookFile ? "" : bookText.trim();
     if (!projectTitle) {
       setCreateError("Enter a project title.");
       return;
@@ -194,13 +206,14 @@ export default function App() {
     setCreateError("");
     setCreating(true);
     try {
-      const project = await createProject(projectTitle, bookText, bookFile);
+      const project = await createProject(projectTitle, pastedText, bookFile);
       setSelectedProject(project);
       setProjects((current) => (current ? [project, ...current] : [project]));
       setView("detail");
       setTitle("");
       setBookText("");
       setBookFile(null);
+      setImportedBookText("");
       setStepAction(null);
       window.history.replaceState({}, "", `#project=${project.id}`);
     } catch (cause) {
@@ -310,8 +323,15 @@ export default function App() {
   return (
     <main className="page-shell">
       <nav className="topbar" aria-label="Main navigation">
-        <span className="brand">GRADION</span>
-        <span className="nav-label">Book Illustration Studio</span>
+        <div className="topbar-left">
+          <span className="brand">GRADION</span>
+          <span className="nav-label">Projects</span>
+        </div>
+        <div className="topbar-account">
+          <span className="avatar" aria-hidden="true">{user.name.charAt(0).toUpperCase()}</span>
+          <span>{user.name}</span>
+          <button type="button" className="topbar-signout" onClick={signOut}>Sign out</button>
+        </div>
       </nav>
       {view === "create" ? (
         <section className="content-card" aria-labelledby="create-title">
@@ -342,13 +362,36 @@ export default function App() {
             <label>
               Upload .txt file
               <input
+                ref={fileInputRef}
                 type="file"
                 accept=".txt,text/plain"
-                onChange={(event) =>
-                  setBookFile(event.target.files?.[0] || null)
-                }
+                onChange={async (event) => {
+                  const file = event.target.files?.[0] || null;
+                  if (!file) return;
+                  setBookFile(file);
+                  const text = await readFileText(file);
+                  setImportedBookText(text);
+                  setBookText(text);
+                }}
               />
             </label>
+            {bookFile && (
+              <div className="file-selection">
+                <span>{bookFile.name}</span>
+                <button
+                  type="button"
+                  className="secondary remove-file"
+                  onClick={() => {
+                    setBookFile(null);
+                    if (bookText === importedBookText) setBookText("");
+                    setImportedBookText("");
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }}
+                >
+                  Remove file
+                </button>
+              </div>
+            )}
             <p className="source-divider">or paste text</p>
             <label>
               Paste book text
@@ -369,7 +412,7 @@ export default function App() {
           </form>
         </section>
       ) : view === "detail" ? (
-        <section className="content-card" aria-live="polite">
+        <section className="content-card project-detail" aria-live="polite">
           {selectedProject ? (
             <>
               <button
@@ -386,6 +429,9 @@ export default function App() {
                 {selectedProject.status} ·{" "}
                 {createdDate(selectedProject.createdAt)}
               </p>
+              <p className="detail-meta">
+                Created {createdDate(selectedProject.createdAt)} by {user.name}
+              </p>
               <h1>{selectedProject.title}</h1>
               <Stepper steps={selectedProject.steps} runningStep={stepAction} />
               <section className="step-action" aria-label="Pipeline action">
@@ -396,12 +442,17 @@ export default function App() {
                   )
                   .map((step) => (
                     <div key={step.key}>
-                      <p className="running">
+                      <p className="running" aria-hidden="true">
                         <span className="spinner" aria-hidden="true" />
                         {stepName(step.key)} is running…
                       </p>
                       <p role="status" className="running">
-                        Running {stepName(step.key)}
+                        <span className="spinner" aria-hidden="true" />
+                        {step.key === "PORTRAITS"
+                          ? "Hugging Face is creating portraits..."
+                          : step.key === "ILLUSTRATIONS"
+                            ? "Hugging Face is creating the illustration..."
+                            : `${stepName(step.key)} is running...`}
                       </p>
                     </div>
                   ))}
@@ -455,8 +506,10 @@ export default function App() {
                     </button>
                   ))}
               </section>
-              <h2>Original book text</h2>
-              <pre className="book-text">{selectedProject.bookText}</pre>
+              <details className="book-details">
+                <summary>Original book text</summary>
+                <pre className="book-text">{selectedProject.bookText}</pre>
+              </details>
             </>
           ) : (
             <p className="loading">Loading project...</p>
@@ -474,9 +527,6 @@ export default function App() {
             <div className="actions">
               <button type="button" onClick={showCreate}>
                 Create project
-              </button>
-              <button type="button" className="secondary" onClick={signOut}>
-                Sign out
               </button>
             </div>
           </div>
@@ -513,7 +563,7 @@ export default function App() {
       {view === "detail" && selectedProject && (
         <section className="generated-results">
           {selectedProject.style && (
-            <section>
+            <section className="style-summary">
               <h2>Style</h2>
               <p>{selectedProject.style}</p>
             </section>
