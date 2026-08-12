@@ -653,6 +653,67 @@ test("shows the stored style and character cards after their steps complete", as
   ).toBeInTheDocument();
 });
 
+test("shows portrait progress for a character while it is running", async () => {
+  vi.stubGlobal(
+    "fetch",
+    projectFetch({
+      status: "In progress",
+      completedSteps: 2,
+      characters: [
+        { name: "Mole", prompt: "An adult mole", portraitStatus: "RUNNING", portraitUrl: null, portraitError: null },
+      ],
+      steps: pipelineSteps("COMPLETED", "COMPLETED", "RUNNING", "PENDING", "PENDING"),
+    }),
+  );
+
+  render(<App />);
+  await openProject();
+
+  expect(screen.getByText("Portrait running")).toBeInTheDocument();
+  expect(screen.getByText("An adult mole")).toBeInTheDocument();
+});
+
+test("shows a completed portrait image", async () => {
+  vi.stubGlobal(
+    "fetch",
+    projectFetch({
+      status: "In progress",
+      completedSteps: 3,
+      characters: [
+        { name: "Mole", prompt: "An adult mole", portraitStatus: "COMPLETED", portraitUrl: "/api/projects/project-1/media/character-1", portraitError: null },
+      ],
+      steps: pipelineSteps("COMPLETED", "COMPLETED", "COMPLETED", "PENDING", "PENDING"),
+    }),
+  );
+
+  render(<App />);
+  await openProject();
+
+  expect(screen.getByRole("img", { name: "Mole portrait" })).toHaveAttribute(
+    "src",
+    "/api/projects/project-1/media/character-1",
+  );
+});
+
+test("shows a failed portrait error", async () => {
+  vi.stubGlobal(
+    "fetch",
+    projectFetch({
+      status: "In progress",
+      completedSteps: 2,
+      characters: [
+        { name: "Mole", prompt: "An adult mole", portraitStatus: "FAILED", portraitUrl: null, portraitError: "Portrait generation failed." },
+      ],
+      steps: pipelineSteps("COMPLETED", "COMPLETED", "FAILED", "PENDING", "PENDING", "Portrait generation failed."),
+    }),
+  );
+
+  render(<App />);
+  await openProject();
+
+  expect(screen.getByRole("alert")).toHaveTextContent("Portrait generation failed.");
+});
+
 function projectFetch(project: Record<string, unknown>) {
   return vi.fn((url: string, init?: RequestInit) => {
     if (url === "/api/session")

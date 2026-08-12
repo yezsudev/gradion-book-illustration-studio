@@ -51,6 +51,7 @@ class PipelineService {
     private final TransactionTemplate transactions;
     private final FakePipelineExecutor executor;
     private final GeminiGateway gemini;
+    private final ImageGenerationGateway imageGateway;
     private final ProjectFiles projectFiles;
     private final ObjectMapper json;
     private final Duration staleAfter;
@@ -61,6 +62,7 @@ class PipelineService {
             TransactionTemplate transactions,
             FakePipelineExecutor executor,
             GeminiGateway gemini,
+            ImageGenerationGateway imageGateway,
             ProjectFiles projectFiles,
             ObjectMapper json,
             @Value("${gradion.pipeline.stale-after:PT5M}") Duration staleAfter,
@@ -69,6 +71,7 @@ class PipelineService {
         this.transactions = transactions;
         this.executor = executor;
         this.gemini = gemini;
+        this.imageGateway = imageGateway;
         this.projectFiles = projectFiles;
         this.json = json;
         this.staleAfter = staleAfter;
@@ -100,8 +103,9 @@ class PipelineService {
         }
         String status = completed == 0 ? "Draft" : completed == StepKey.values().length ? "Done" : "In progress";
         String style = jdbcTemplate.queryForObject("select style from projects where id = ?", String.class, projectId);
-        List<CharacterView> characters = jdbcTemplate.query("select name, prompt from characters where project_id = ? order by position",
-                (resultSet, rowNum) -> new CharacterView(resultSet.getString("name"), resultSet.getString("prompt")), projectId);
+        List<CharacterView> characters = jdbcTemplate.query("select id, name, prompt, portrait_status, portrait_path, portrait_error from characters where project_id = ? order by position",
+                (resultSet, rowNum) -> new CharacterView(resultSet.getString("id"), resultSet.getString("name"), resultSet.getString("prompt"),
+                        resultSet.getString("portrait_status"), resultSet.getString("portrait_path") == null ? null : "/api/projects/" + projectId + "/media/" + resultSet.getString("id"), resultSet.getString("portrait_error")), projectId);
         return new ProjectPipeline(status, completed, StepKey.values().length, steps, style, characters);
     }
 
@@ -149,6 +153,27 @@ class PipelineService {
             });
             return;
         }
+        if (step == StepKey.PORTRAITS) {
+            List<CharacterRow> characters = jdbcTemplate.query("select id, name, prompt, portrait_status, portrait_path, portrait_interaction_id from characters where project_id = ? order by position",
+                    (resultSet, rowNum) -> new CharacterRow(resultSet.getString("id"), resultSet.getString("name"), resultSet.getString("prompt"), resultSet.getString("portrait_status"), resultSet.getString("portrait_path"), resultSet.getString("portrait_interaction_id")), projectId);
+            if (characters.isEmpty()) throw new IllegalStateException("Characters are unavailable.");
+            for (CharacterRow character : characters) {
+                if ("COMPLETED".equals(character.portraitStatus) && character.portraitPath != null) {
+                    continue;
+                }
+                jdbcTemplate.update("update characters set portrait_status = 'RUNNING', portrait_error = null where id = ?", character.id);
+                try {
+                    ImageGenerationGateway.ImageResult result = imageGateway.generatePortrait(character.name, character.prompt);
+                    projectFiles.writePortrait(projectId, character.id, result.bytes());
+                    jdbcTemplate.update("update characters set portrait_status = 'COMPLETED', portrait_path = ?, portrait_error = null, portrait_generated_at = current_timestamp, portrait_interaction_id = ? where id = ?",
+                            "portraits/" + character.id + ".png", result.id(), character.id);
+                } catch (RuntimeException | java.io.IOException exception) {
+                    jdbcTemplate.update("update characters set portrait_status = 'FAILED', portrait_error = ? where id = ?", safeError(exception), character.id);
+                    throw exception instanceof RuntimeException runtime ? runtime : new IllegalStateException("Could not persist portrait.", exception);
+                }
+            }
+            return;
+        }
         executor.execute();
     }
 
@@ -173,9 +198,9 @@ class PipelineService {
     }
 
     private ProjectContext loadProjectContext(String projectId) {
-        return jdbcTemplate.queryForObject("select style, gemini_file_name, gemini_file_uri, gemini_root_interaction_id, gemini_style_interaction_id from projects where id = ?",
+        return jdbcTemplate.queryForObject("select style, gemini_file_name, gemini_file_uri, gemini_root_interaction_id, gemini_style_interaction_id, gemini_characters_interaction_id from projects where id = ?",
                 (resultSet, rowNum) -> new ProjectContext(resultSet.getString("style"), resultSet.getString("gemini_file_name"), resultSet.getString("gemini_file_uri"),
-                        resultSet.getString("gemini_root_interaction_id"), resultSet.getString("gemini_style_interaction_id")), projectId);
+                        resultSet.getString("gemini_root_interaction_id"), resultSet.getString("gemini_style_interaction_id"), resultSet.getString("gemini_characters_interaction_id")), projectId);
     }
 
     private List<CharacterInput> parseCharacters(String text) {
@@ -274,13 +299,19 @@ class PipelineService {
     }
 
     private record StepRow(StepKey key, State state, String runToken, String executorInstanceId, Timestamp startedAt, String error) { }
-    private record ProjectContext(String style, String fileName, String fileUri, String rootInteractionId, String styleInteractionId) {
+    private String safeError(Exception exception) {
+        String message = exception.getMessage();
+        return message == null || message.isBlank() ? "Portrait generation failed." : message.substring(0, Math.min(500, message.length()));
+    }
+
+    private record ProjectContext(String style, String fileName, String fileUri, String rootInteractionId, String styleInteractionId, String charactersInteractionId) {
         GeminiGateway.FileReference file() {
             return fileName == null || fileUri == null ? null : new GeminiGateway.FileReference(fileName, fileUri);
         }
     }
     private record CharacterInput(String name, String prompt) { }
-    record CharacterView(String name, String prompt) { }
+    private record CharacterRow(String id, String name, String prompt, String portraitStatus, String portraitPath, String portraitInteractionId) { }
+    record CharacterView(String id, String name, String prompt, String portraitStatus, String portraitUrl, String portraitError) { }
     private record Claim(String runToken, String message, boolean notFound) {
         static Claim claimed(String runToken) { return new Claim(runToken, null, false); }
         static Claim conflict(String message) { return new Claim(null, message, false); }

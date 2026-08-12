@@ -12,6 +12,7 @@ import java.util.UUID;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -125,6 +126,21 @@ public class ProjectController {
         }
     }
 
+    @GetMapping("/{projectId}/media/{characterId}")
+    public ResponseEntity<?> portrait(@PathVariable String projectId, @PathVariable String characterId, HttpServletRequest request) {
+        Optional<CurrentUser.User> user = currentUser.find(request);
+        if (user.isEmpty()) return unauthorized();
+        boolean owned = !jdbcTemplate.query("select c.id from characters c join projects p on p.id = c.project_id where c.id = ? and c.project_id = ? and p.owner_id = ?",
+                (resultSet, rowNum) -> resultSet.getString(1), characterId, projectId, user.get().id()).isEmpty();
+        if (!owned) return ResponseEntity.notFound().build();
+        try {
+            byte[] bytes = projectFiles.readPortrait(projectId, characterId);
+            return ResponseEntity.ok().contentType(MediaType.IMAGE_PNG).header(HttpHeaders.CACHE_CONTROL, "no-store").body(bytes);
+        } catch (IOException | IllegalArgumentException exception) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
     private String uploadedText(MultipartFile file) throws IOException, InvalidUploadException {
         if (file == null) return null;
         String filename = file.getOriginalFilename();
@@ -143,17 +159,12 @@ public class ProjectController {
 
     private ProjectDetail detail(String id, String title, Timestamp createdAt, String bookText) {
         PipelineService.ProjectPipeline pipeline = pipelineService.pipeline(id);
-        return new ProjectDetail(id, title, createdAt.toInstant(), pipeline.status(), pipeline.completedSteps(), pipeline.totalSteps(), bookText, pipeline.steps(), null, characters(id));
+        return new ProjectDetail(id, title, createdAt.toInstant(), pipeline.status(), pipeline.completedSteps(), pipeline.totalSteps(), bookText, pipeline.steps(), null, pipeline.characters());
     }
 
     private ProjectDetail detail(String id, String title, Timestamp createdAt, String bookText, String style) {
         PipelineService.ProjectPipeline pipeline = pipelineService.pipeline(id);
-        return new ProjectDetail(id, title, createdAt.toInstant(), pipeline.status(), pipeline.completedSteps(), pipeline.totalSteps(), bookText, pipeline.steps(), style, characters(id));
-    }
-
-    private List<CharacterView> characters(String projectId) {
-        return jdbcTemplate.query("select name, prompt from characters where project_id = ? order by position",
-                (resultSet, rowNum) -> new CharacterView(resultSet.getString("name"), resultSet.getString("prompt")), projectId);
+        return new ProjectDetail(id, title, createdAt.toInstant(), pipeline.status(), pipeline.completedSteps(), pipeline.totalSteps(), bookText, pipeline.steps(), style, pipeline.characters());
     }
 
     private ResponseEntity<Map<String, String>> unauthorized() {
@@ -171,6 +182,5 @@ public class ProjectController {
         }
     }
     private record ProjectSummary(String id, String title, Instant createdAt, String status, int completedSteps, int totalSteps) { }
-    private record ProjectDetail(String id, String title, Instant createdAt, String status, int completedSteps, int totalSteps, String bookText, List<PipelineService.StepView> steps, String style, List<CharacterView> characters) { }
-    private record CharacterView(String name, String prompt) { }
+    private record ProjectDetail(String id, String title, Instant createdAt, String status, int completedSteps, int totalSteps, String bookText, List<PipelineService.StepView> steps, String style, List<PipelineService.CharacterView> characters) { }
 }

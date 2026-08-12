@@ -17,6 +17,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -27,6 +28,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:gemini-pipeline;DB_CLOSE_DELAY=-1",
@@ -38,6 +40,7 @@ class GeminiPipelineControllerTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private JdbcTemplate jdbcTemplate;
     @MockBean private GeminiGateway geminiGateway;
+    @MockBean private ImageGenerationGateway imageGateway;
 
     @Test
     void suppliedStyleCompletesWithoutCallingGeminiAndIsReturnedInProjectDetail() throws Exception {
@@ -192,10 +195,98 @@ class GeminiPipelineControllerTest {
         }
     }
 
+    @Test
+    void portraitsAreBlockedUntilCharactersComplete() throws Exception {
+        Cookie owner = signIn("portraits-order@example.com");
+        String projectId = createProject(owner, "Portrait order");
+
+        mockMvc.perform(post("/api/projects/{id}/steps/PORTRAITS/run", projectId).cookie(owner))
+                .andExpect(status().isConflict());
+        verify(imageGateway, never()).generatePortrait(anyString(), anyString());
+    }
+
+    @Test
+    void portraitsPersistEachImageAndExposeAnAuthorizedUrl() throws Exception {
+        Cookie owner = signIn("portraits-success@example.com");
+        String projectId = createProject(owner, "Portrait success");
+        completeCharacters(owner, projectId, "characters-1", "Mole", "Rat");
+        String characterId = jdbcTemplate.queryForObject("select id from characters where project_id = ? and position = 1", String.class, projectId);
+        when(geminiGateway.isAvailable(any(), anyString())).thenReturn(true);
+        when(imageGateway.generatePortrait(eq("Mole"), anyString()))
+                .thenReturn(new ImageGenerationGateway.ImageResult("portrait-1", "image/png", new byte[] { 1, 2, 3 }));
+        when(imageGateway.generatePortrait(eq("Rat"), anyString()))
+                .thenReturn(new ImageGenerationGateway.ImageResult("portrait-2", "image/png", new byte[] { 4, 5, 6 }));
+
+        mockMvc.perform(post("/api/projects/{id}/steps/PORTRAITS/run", projectId).cookie(owner))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.steps[2].state").value("COMPLETED"))
+                .andExpect(jsonPath("$.characters[0].portraitStatus").value("COMPLETED"))
+                .andExpect(jsonPath("$.characters[0].portraitUrl").value("/api/projects/" + projectId + "/media/" + characterId));
+        mockMvc.perform(get("/api/projects/{id}/media/{characterId}", projectId, characterId).cookie(owner))
+                .andExpect(status().isOk()).andExpect(content().bytes(new byte[] { 1, 2, 3 }));
+    }
+
+    @Test
+    void failedPortraitPreservesEarlierImageAndRetrySkipsIt() throws Exception {
+        Cookie owner = signIn("portraits-retry@example.com");
+        String projectId = createProject(owner, "Portrait retry");
+        completeCharacters(owner, projectId, "characters-2", "Mole", "Rat");
+        String firstId = jdbcTemplate.queryForObject("select id from characters where project_id = ? and position = 1", String.class, projectId);
+        String secondId = jdbcTemplate.queryForObject("select id from characters where project_id = ? and position = 2", String.class, projectId);
+        when(geminiGateway.isAvailable(any(), anyString())).thenReturn(true);
+        when(imageGateway.generatePortrait(eq("Mole"), anyString()))
+                .thenReturn(new ImageGenerationGateway.ImageResult("portrait-1", "image/png", new byte[] { 1 }));
+        when(imageGateway.generatePortrait(eq("Rat"), anyString()))
+                .thenThrow(new IllegalStateException("quota"))
+                .thenReturn(new ImageGenerationGateway.ImageResult("portrait-2", "image/png", new byte[] { 2 }));
+
+        mockMvc.perform(post("/api/projects/{id}/steps/PORTRAITS/run", projectId).cookie(owner))
+                .andExpect(jsonPath("$.steps[2].state").value("FAILED"))
+                .andExpect(jsonPath("$.characters[0].portraitStatus").value("COMPLETED"))
+                .andExpect(jsonPath("$.characters[1].portraitStatus").value("FAILED"));
+        mockMvc.perform(post("/api/projects/{id}/steps/PORTRAITS/run", projectId).cookie(owner))
+                .andExpect(jsonPath("$.steps[2].state").value("COMPLETED"));
+        verify(imageGateway, times(1)).generatePortrait("Mole", "Mole prompt");
+        verify(imageGateway, times(2)).generatePortrait(eq("Rat"), eq("Rat prompt"));
+        assertThat(jdbcTemplate.queryForObject("select portrait_status from characters where id = ?", String.class, firstId)).isEqualTo("COMPLETED");
+        assertThat(jdbcTemplate.queryForObject("select portrait_status from characters where id = ?", String.class, secondId)).isEqualTo("COMPLETED");
+    }
+
+    @Test
+    void portraitMediaIsOwnershipChecked() throws Exception {
+        Cookie owner = signIn("portraits-owner@example.com");
+        Cookie other = signIn("portraits-other@example.com");
+        String projectId = createProject(owner, "Private portrait");
+        completeCharacters(owner, projectId, "characters-3", "Mole");
+        String characterId = jdbcTemplate.queryForObject("select id from characters where project_id = ?", String.class, projectId);
+        when(geminiGateway.isAvailable(any(), anyString())).thenReturn(true);
+        when(imageGateway.generatePortrait(eq("Mole"), anyString()))
+                .thenReturn(new ImageGenerationGateway.ImageResult("portrait-3", "image/png", new byte[] { 9 }));
+        mockMvc.perform(post("/api/projects/{id}/steps/PORTRAITS/run", projectId).cookie(owner));
+        mockMvc.perform(get("/api/projects/{id}/media/{characterId}", projectId, characterId).cookie(other))
+                .andExpect(status().isNotFound());
+    }
+
     private void stubFreshBookContext() throws Exception {
         when(geminiGateway.isAvailable(any(), anyString())).thenReturn(false);
         when(geminiGateway.uploadBook(any())).thenReturn(new GeminiGateway.FileReference("files/book-1", "gemini://book-1"));
         when(geminiGateway.createBookContext(any())).thenReturn(new GeminiGateway.Interaction("root-1", "Book context ready."));
+    }
+
+    private void completeCharacters(Cookie owner, String projectId, String interactionId, String... names) throws Exception {
+        completeCustomStyle(owner, projectId);
+        stubFreshBookContext();
+        when(geminiGateway.createStyleContext("root-1", "Ink illustration")).thenReturn(new GeminiGateway.Interaction("style-context-" + interactionId, "Ready."));
+        StringBuilder output = new StringBuilder("{\"characters\":[");
+        for (int i = 0; i < names.length; i++) {
+            if (i > 0) output.append(',');
+            output.append("{\"name\":\"").append(names[i]).append("\",\"prompt\":\"").append(names[i]).append(" prompt\",\"adult\":true}");
+        }
+        output.append("]}");
+        when(geminiGateway.generateCharacters("style-context-" + interactionId))
+                .thenReturn(new GeminiGateway.Interaction(interactionId, output.toString()));
+        mockMvc.perform(post("/api/projects/{id}/steps/CHARACTERS/run", projectId).cookie(owner))
+                .andExpect(status().isOk());
     }
 
     private void completeCustomStyle(Cookie owner, String projectId) throws Exception {

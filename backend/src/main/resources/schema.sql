@@ -35,9 +35,20 @@ create table if not exists characters (
     position integer not null,
     name varchar(200) not null,
     prompt varchar(4000) not null,
+    portrait_status varchar(12) not null default 'PENDING',
+    portrait_path varchar(500),
+    portrait_error varchar(500),
+    portrait_generated_at timestamp,
+    portrait_interaction_id varchar(500),
     constraint fk_characters_project foreign key (project_id) references projects(id),
     constraint uq_characters_position unique (project_id, position)
 );
+
+alter table characters add column if not exists portrait_status varchar(12) not null default 'PENDING';
+alter table characters add column if not exists portrait_path varchar(500);
+alter table characters add column if not exists portrait_error varchar(500);
+alter table characters add column if not exists portrait_generated_at timestamp;
+alter table characters add column if not exists portrait_interaction_id varchar(500);
 
 create table if not exists project_steps (
     project_id varchar(36) not null,

@@ -12,4 +12,5 @@ button { width: fit-content; padding: 12px 18px; border: 0; border-radius: 8px; 
 .generated-results { display: grid; gap: 1rem; margin: 1rem auto 4rem; width: min(760px, calc(100% - 32px)); }
 .character-cards { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
 .character-cards article { border: 1px solid #d8d3c9; border-radius: .5rem; padding: .75rem; }
+.character-cards img { display: block; width: 100%; margin-top: 1rem; border-radius: .5rem; }
 @media (max-width: 640px) { .topbar { padding: 16px; }.content-card { margin: 6vh auto; padding: 30px 24px; }.account { flex-direction: column; }.stepper { grid-template-columns: 1fr; }.stepper li { grid-template-columns: 28px 1fr; align-items: center; } }

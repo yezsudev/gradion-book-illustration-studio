@@ -45,10 +45,41 @@ class ProjectFiles {
         return projectDirectory(projectId).resolve("book.txt");
     }
 
+    void writePortrait(String projectId, String characterId, byte[] bytes) throws IOException {
+        Path directory = projectDirectory(projectId).resolve("portraits");
+        Files.createDirectories(directory);
+        Path temporary = Files.createTempFile(directory, "portrait-", ".tmp");
+        Path portrait = portraitPath(projectId, characterId);
+        try {
+            Files.write(temporary, bytes, StandardOpenOption.TRUNCATE_EXISTING);
+            try {
+                Files.move(temporary, portrait, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException ignored) {
+                Files.move(temporary, portrait, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    byte[] readPortrait(String projectId, String characterId) throws IOException {
+        return Files.readAllBytes(portraitPath(projectId, characterId));
+    }
+
+    Path portraitPath(String projectId, String characterId) {
+        UUID.fromString(characterId);
+        return projectDirectory(projectId).resolve("portraits").resolve(characterId + ".png").normalize();
+    }
+
     void deleteProject(String projectId) throws IOException {
         Path directory = projectDirectory(projectId);
-        Files.deleteIfExists(directory.resolve("book.txt"));
-        Files.deleteIfExists(directory);
+        if (Files.exists(directory)) {
+            try (var paths = Files.walk(directory)) {
+                paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+                    try { Files.deleteIfExists(path); } catch (IOException ignored) { }
+                });
+            }
+        }
     }
 
     private Path projectDirectory(String projectId) {

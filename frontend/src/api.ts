@@ -18,7 +18,14 @@ export type ProjectStep = {
   canRecover: boolean;
   error: string | null;
 };
-export type ProjectCharacter = { name: string; prompt: string };
+export type ProjectCharacter = {
+  id: string;
+  name: string;
+  prompt: string;
+  portraitStatus: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
+  portraitUrl: string | null;
+  portraitError: string | null;
+};
 export type ProjectPipeline = Pick<
   ProjectSummary,
   "status" | "completedSteps" | "totalSteps"

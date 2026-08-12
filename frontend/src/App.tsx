@@ -526,6 +526,13 @@ export default function App() {
                   <article key={character.name}>
                     <h3>{character.name}</h3>
                     <p>{character.prompt}</p>
+                    {character.portraitStatus === "COMPLETED" && character.portraitUrl ? (
+                      <img src={character.portraitUrl} alt={`${character.name} portrait`} />
+                    ) : character.portraitStatus === "FAILED" ? (
+                      <p role="alert" className="error">{character.portraitError || "Portrait generation failed."}</p>
+                    ) : (
+                      <p className="running">Portrait {(character.portraitStatus || "PENDING").toLowerCase()}</p>
+                    )}
                   </article>
                 ))}
               </div>

@@ -147,4 +147,4 @@ No Docker, deployment, WebSocket/SSE, attempt-history UI, sample books, or bonus
 - [Gemini Interactions API](https://ai.google.dev/gemini-api/docs/interactions)
 - [Gemini Files API](https://ai.google.dev/gemini-api/docs/files)
 - [Gemini structured output](https://ai.google.dev/gemini-api/docs/structured-output)
-- [Gemini image generation](https://ai.google.dev/gemini-api/docs/image-generation)
+- [Hugging Face Inference Providers](https://huggingface.co/docs/inference-providers/tasks/text-to-image) for portrait image generation

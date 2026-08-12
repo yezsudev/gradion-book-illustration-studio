@@ -114,6 +114,14 @@ class HttpGeminiGateway implements GeminiGateway {
         return interaction(styleInteractionId, userContent(content), format);
     }
 
+    @Override
+    public Interaction createCharactersContext(String styleInteractionId, String characters) {
+        ArrayNode content = json.createArrayNode();
+        content.addObject().put("type", "text").put("text", "Use these persisted adult character descriptions for portrait generation: " + characters);
+        return interaction(styleInteractionId, userContent(content), null);
+    }
+
+
     private ArrayNode userContent(ArrayNode parts) {
         ObjectNode step = json.createObjectNode();
         step.put("type", "content").put("role", "user").set("content", parts);
@@ -121,19 +129,23 @@ class HttpGeminiGateway implements GeminiGateway {
     }
 
     private Interaction interaction(String previousId, ArrayNode input, ObjectNode responseFormat) {
+        JsonNode body = interactionBody(model, previousId, input, responseFormat);
+        String id = body.path("id").asText();
+        String text = outputText(body);
+        if (blank(id) || blank(text)) throw failure("Gemini returned an incomplete response.");
+        return new Interaction(id, text.trim());
+    }
+
+    private JsonNode interactionBody(String requestModel, String previousId, ArrayNode input, ObjectNode responseFormat) {
         requireKey();
         try {
             ObjectNode request = json.createObjectNode();
-            request.put("model", model).set("input", input);
+            request.put("model", requestModel).set("input", input);
             if (previousId != null) request.put("previous_interaction_id", previousId);
             if (responseFormat != null) request.set("response_format", responseFormat);
             HttpResponse<String> response = client.send(request("/v1/interactions")
                     .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(request))).build(), HttpResponse.BodyHandlers.ofString());
-            JsonNode body = body(response, "Interactions create");
-            String id = body.path("id").asText();
-            String text = outputText(body);
-            if (blank(id) || blank(text)) throw failure("Gemini returned an incomplete response.");
-            return new Interaction(id, text.trim());
+            return body(response, "Interactions create");
         } catch (IOException | InterruptedException exception) {
             if (exception instanceof InterruptedException) Thread.currentThread().interrupt();
             throw failure("Could not call Gemini.", exception);
