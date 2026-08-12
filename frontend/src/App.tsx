@@ -1,13 +1,20 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { createProject, createSession, deleteSession, getHealth, getProject, getProjects, getSession, Identity, ProjectDetail, ProjectSummary } from './api';
+import { createProject, createSession, deleteSession, getHealth, getProject, getProjects, getSession, Identity, ProjectDetail, ProjectStep, ProjectSummary, recoverStep, runStep } from './api';
 import './App.css';
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const steps = ['Style', 'Characters', 'Portraits', 'Chapters', 'Illustrations'];
+const STEP_LOADING_MS = 1000;
+function stepName(key: ProjectStep['key']) {
+  return key.charAt(0) + key.slice(1).toLowerCase();
+}
 
-function Stepper() {
+function Stepper({ steps, runningStep }: { steps: ProjectStep[]; runningStep: ProjectStep['key'] | null }) {
   return <ol className="stepper" aria-label="Project progress">
-    {steps.map((step, index) => <li key={step} className={index === 0 ? 'current' : 'pending'}><span>{index + 1}</span>{step}</li>)}
+    {steps.map((step, index) => {
+      const state = runningStep === step.key ? 'RUNNING' : step.state;
+      const label = state === 'COMPLETED' ? 'Completed' : state === 'RUNNING' ? 'Running' : state === 'FAILED' ? 'Failed' : step.canRun ? 'Current' : 'Pending';
+      return <li key={step.key} className={label.toLowerCase()}><span>{index + 1}</span><div>{stepName(step.key)}<small>{label}</small></div></li>;
+    })}
   </ol>;
 }
 
@@ -30,6 +37,8 @@ export default function App() {
   const [bookFile, setBookFile] = useState<File | null>(null);
   const [createError, setCreateError] = useState('');
   const [creating, setCreating] = useState(false);
+  const [stepAction, setStepAction] = useState<ProjectStep['key'] | null>(null);
+  const [stepError, setStepError] = useState('');
 
   useEffect(() => { getHealth().catch(() => undefined); }, []);
   useEffect(() => { getSession().then(setUser).catch(() => setUser(null)); }, []);
@@ -37,11 +46,21 @@ export default function App() {
     if (!user) return;
     setProjects(undefined);
     setProjectError('');
-    getProjects().then(setProjects).catch((cause) => {
+    getProjects().then((loadedProjects) => {
+      setProjects(loadedProjects);
+      const projectId = new URLSearchParams(window.location.hash.slice(1)).get('project');
+      if (projectId) openProject(projectId);
+    }).catch((cause) => {
       setProjectError(cause instanceof Error ? cause.message : 'Could not load projects.');
       setProjects([]);
     });
   }, [user]);
+  useEffect(() => {
+    const projectId = selectedProject?.id;
+    if (!projectId || !selectedProject.steps.some((step) => step.state === 'RUNNING')) return;
+    const timer = window.setInterval(() => getProject(projectId).then(setSelectedProject).catch(() => undefined), 2000);
+    return () => window.clearInterval(timer);
+  }, [selectedProject]);
 
   async function signIn(event: FormEvent) {
     event.preventDefault();
@@ -71,6 +90,7 @@ export default function App() {
     setName('');
     setEmail('');
     setIdentityError('');
+    window.history.replaceState({}, '', window.location.pathname);
   }
 
   function showCreate() {
@@ -104,6 +124,8 @@ export default function App() {
       setTitle('');
       setBookText('');
       setBookFile(null);
+      setStepAction(null);
+      window.history.replaceState({}, '', `#project=${project.id}`);
     } catch (cause) {
       setCreateError(cause instanceof Error ? cause.message : 'Could not create the project.');
     } finally {
@@ -113,12 +135,32 @@ export default function App() {
 
   async function openProject(id: string) {
     setSelectedProject(undefined);
+    setStepAction(null);
     setView('detail');
+    window.history.replaceState({}, '', `#project=${id}`);
     try {
       setSelectedProject(await getProject(id));
     } catch (cause) {
       setProjectError(cause instanceof Error ? cause.message : 'Could not load the project.');
       setView('list');
+    }
+  }
+
+  async function executeStep(step: ProjectStep, recover = false) {
+    if (!selectedProject) return;
+    setStepAction(step.key);
+    setStepError('');
+    try {
+      const pipelineRequest = recover ? recoverStep(selectedProject.id, step.key) : runStep(selectedProject.id, step.key);
+      const [pipeline] = await Promise.all([
+        pipelineRequest,
+        new Promise((resolve) => window.setTimeout(resolve, STEP_LOADING_MS)),
+      ]);
+      setSelectedProject((current) => current ? { ...current, ...pipeline } : current);
+    } catch (cause) {
+      setStepError(cause instanceof Error ? cause.message : 'Could not run this step.');
+    } finally {
+      setStepAction(null);
     }
   }
 
@@ -129,9 +171,9 @@ export default function App() {
   </section></main>;
 
   return <main className="page-shell"><nav className="topbar" aria-label="Main navigation"><span className="brand">GRADION</span><span className="nav-label">Book Illustration Studio</span></nav>
-    {view === 'create' ? <section className="content-card" aria-labelledby="create-title"><button type="button" className="text-button" onClick={() => setView('list')}>Back to projects</button><p className="eyebrow">New project</p><h1 id="create-title">Add your book</h1><p className="lede">Upload one <code>.txt</code> file or paste the complete book text below.</p>
+    {view === 'create' ? <section className="content-card" aria-labelledby="create-title"><button type="button" className="text-button" onClick={() => { setView('list'); window.history.replaceState({}, '', window.location.pathname); }}>Back to projects</button><p className="eyebrow">New project</p><h1 id="create-title">Add your book</h1><p className="lede">Upload one <code>.txt</code> file or paste the complete book text below.</p>
       <form onSubmit={create} noValidate><label>Project title<input value={title} onChange={(event) => setTitle(event.target.value)} /></label><label>Upload .txt file<input type="file" accept=".txt,text/plain" onChange={(event) => setBookFile(event.target.files?.[0] || null)} /></label><p className="source-divider">or paste text</p><label>Paste book text<textarea value={bookText} onChange={(event) => setBookText(event.target.value)} rows={8} /></label>{createError && <p role="alert" className="error">{createError}</p>}<button type="submit" disabled={creating}>{creating ? 'Creating project…' : 'Create project'}</button></form>
-    </section> : view === 'detail' ? <section className="content-card" aria-live="polite">{selectedProject ? <><button type="button" className="text-button" onClick={() => setView('list')}>Back to projects</button><p className="eyebrow">{selectedProject.status} · {createdDate(selectedProject.createdAt)}</p><h1>{selectedProject.title}</h1><Stepper /><h2>Original book text</h2><pre className="book-text">{selectedProject.bookText}</pre></> : <p className="loading">Loading project...</p>}</section> : <section className="content-card" aria-labelledby="projects-title"><div className="account"><div><h1 id="projects-title">Your projects</h1><p>{user.name} · {user.email}</p></div><div className="actions"><button type="button" onClick={showCreate}>Create project</button><button type="button" className="secondary" onClick={signOut}>Sign out</button></div></div>
+    </section> : view === 'detail' ? <section className="content-card" aria-live="polite">{selectedProject ? <><button type="button" className="text-button" onClick={() => { setView('list'); window.history.replaceState({}, '', window.location.pathname); }}>Back to projects</button><p className="eyebrow">{selectedProject.status} · {createdDate(selectedProject.createdAt)}</p><h1>{selectedProject.title}</h1><Stepper steps={selectedProject.steps} runningStep={stepAction} /><section className="step-action" aria-label="Pipeline action">{selectedProject.steps.filter((step) => step.state === 'RUNNING' || stepAction === step.key).map((step) => <div key={step.key}><p className="running"><span className="spinner" aria-hidden="true" />{stepName(step.key)} is running…</p><p role="status" className="running">Running {stepName(step.key)}</p></div>)}{selectedProject.steps.filter((step) => step.state === 'FAILED' && step.error).map((step) => <p key={step.key} role="alert" className="error">{step.error}</p>)}{stepError && <p role="alert" className="error">{stepError}</p>}{selectedProject.steps.filter((step) => step.canRun || step.canRetry || step.canRecover).map((step) => <button key={step.key} type="button" disabled={stepAction !== null} onClick={() => executeStep(step, step.canRecover)}>{stepAction === step.key ? <><span className="spinner" aria-hidden="true" /> {stepName(step.key)} is running…</> : step.canRecover ? `Recover ${stepName(step.key)}` : step.canRetry ? `Retry ${stepName(step.key)}` : `Run ${stepName(step.key)}`}</button>)}</section><h2>Original book text</h2><pre className="book-text">{selectedProject.bookText}</pre></> : <p className="loading">Loading project...</p>}</section> : <section className="content-card" aria-labelledby="projects-title"><div className="account"><div><h1 id="projects-title">Your projects</h1><p>{user.name} · {user.email}</p></div><div className="actions"><button type="button" onClick={showCreate}>Create project</button><button type="button" className="secondary" onClick={signOut}>Sign out</button></div></div>
       {projectError && <p role="alert" className="error">{projectError}</p>}{projects === undefined ? <p>Loading projects...</p> : projects.length === 0 ? <p className="empty-state">No projects yet.</p> : <ul className="project-list">{projects.map((project) => <li key={project.id}><button type="button" className="project-card" onClick={() => openProject(project.id)}><strong>{project.title}</strong><span>{createdDate(project.createdAt)} · {project.status} · {project.completedSteps}/{project.totalSteps} steps</span></button></li>)}</ul>}
     </section>}
   </main>;

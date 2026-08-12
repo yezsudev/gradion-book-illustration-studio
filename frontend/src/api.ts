@@ -6,11 +6,20 @@ export type ProjectSummary = {
   id: string;
   title: string;
   createdAt: string;
-  status: 'Draft';
+  status: 'Draft' | 'In progress' | 'Done';
   completedSteps: number;
   totalSteps: number;
 };
-export type ProjectDetail = ProjectSummary & { bookText: string };
+export type ProjectStep = {
+  key: 'STYLE' | 'CHARACTERS' | 'PORTRAITS' | 'CHAPTERS' | 'ILLUSTRATIONS';
+  state: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+  canRun: boolean;
+  canRetry: boolean;
+  canRecover: boolean;
+  error: string | null;
+};
+export type ProjectPipeline = Pick<ProjectSummary, 'status' | 'completedSteps' | 'totalSteps'> & { steps: ProjectStep[] };
+export type ProjectDetail = ProjectSummary & { bookText: string; steps: ProjectStep[] };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, { credentials: 'include', ...init });
@@ -40,4 +49,10 @@ export function createProject(title: string, bookText: string, file: File | null
   if (bookText.trim()) form.append('bookText', bookText);
   if (file) form.append('file', file);
   return request<ProjectDetail>('/projects', { method: 'POST', body: form });
+}
+export function runStep(projectId: string, step: ProjectStep['key']): Promise<ProjectPipeline> {
+  return request<ProjectPipeline>(`/projects/${projectId}/steps/${step}/run`, { method: 'POST' });
+}
+export function recoverStep(projectId: string, step: ProjectStep['key']): Promise<ProjectPipeline> {
+  return request<ProjectPipeline>(`/projects/${projectId}/steps/${step}/recover`, { method: 'POST' });
 }

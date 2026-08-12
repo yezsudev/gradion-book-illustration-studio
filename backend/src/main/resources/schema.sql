@@ -21,3 +21,34 @@ create table if not exists projects (
 );
 
 create index if not exists idx_projects_owner_created on projects(owner_id, created_at);
+
+create table if not exists project_steps (
+    project_id varchar(36) not null,
+    step_key varchar(20) not null,
+    position integer not null,
+    state varchar(12) not null,
+    run_token varchar(36),
+    executor_instance_id varchar(36),
+    started_at timestamp,
+    finished_at timestamp,
+    error_message varchar(500),
+    primary key (project_id, step_key),
+    constraint fk_project_steps_project foreign key (project_id) references projects(id),
+    constraint uq_project_steps_position unique (project_id, position)
+);
+
+insert into project_steps (project_id, step_key, position, state)
+select id, 'STYLE', 1, 'PENDING' from projects
+where not exists (select 1 from project_steps where project_steps.project_id = projects.id and step_key = 'STYLE');
+insert into project_steps (project_id, step_key, position, state)
+select id, 'CHARACTERS', 2, 'PENDING' from projects
+where not exists (select 1 from project_steps where project_steps.project_id = projects.id and step_key = 'CHARACTERS');
+insert into project_steps (project_id, step_key, position, state)
+select id, 'PORTRAITS', 3, 'PENDING' from projects
+where not exists (select 1 from project_steps where project_steps.project_id = projects.id and step_key = 'PORTRAITS');
+insert into project_steps (project_id, step_key, position, state)
+select id, 'CHAPTERS', 4, 'PENDING' from projects
+where not exists (select 1 from project_steps where project_steps.project_id = projects.id and step_key = 'CHAPTERS');
+insert into project_steps (project_id, step_key, position, state)
+select id, 'ILLUSTRATIONS', 5, 'PENDING' from projects
+where not exists (select 1 from project_steps where project_steps.project_id = projects.id and step_key = 'ILLUSTRATIONS');

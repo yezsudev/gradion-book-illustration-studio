@@ -14,6 +14,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -25,27 +26,34 @@ import org.springframework.web.multipart.MultipartFile;
 @RestController
 @RequestMapping("/api/projects")
 public class ProjectController {
-    private static final int TOTAL_STEPS = 5;
-
     private final JdbcTemplate jdbcTemplate;
     private final CurrentUser currentUser;
     private final ProjectFiles projectFiles;
+    private final PipelineService pipelineService;
+    private final TransactionTemplate transactions;
 
-    public ProjectController(JdbcTemplate jdbcTemplate, CurrentUser currentUser, ProjectFiles projectFiles) {
+    public ProjectController(
+            JdbcTemplate jdbcTemplate,
+            CurrentUser currentUser,
+            ProjectFiles projectFiles,
+            PipelineService pipelineService,
+            TransactionTemplate transactions) {
         this.jdbcTemplate = jdbcTemplate;
         this.currentUser = currentUser;
         this.projectFiles = projectFiles;
+        this.pipelineService = pipelineService;
+        this.transactions = transactions;
     }
 
     @GetMapping
     public ResponseEntity<?> list(HttpServletRequest request) {
         Optional<CurrentUser.User> user = currentUser.find(request);
         if (user.isEmpty()) return unauthorized();
-        List<ProjectSummary> projects = jdbcTemplate.query(
+        List<ProjectRow> projects = jdbcTemplate.query(
                 "select id, title, created_at from projects where owner_id = ? order by created_at desc",
-                (resultSet, rowNum) -> summary(resultSet.getString("id"), resultSet.getString("title"), resultSet.getTimestamp("created_at")),
+                (resultSet, rowNum) -> new ProjectRow(resultSet.getString("id"), resultSet.getString("title"), resultSet.getTimestamp("created_at")),
                 user.get().id());
-        return ResponseEntity.ok(projects);
+        return ResponseEntity.ok(projects.stream().map(this::summary).toList());
     }
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -82,7 +90,10 @@ public class ProjectController {
         String canonicalBookText = hasPastedText ? pastedText : uploadedText;
         try {
             projectFiles.writeBook(projectId, canonicalBookText);
-            jdbcTemplate.update("insert into projects (id, owner_id, title) values (?, ?, ?)", projectId, user.get().id(), projectTitle);
+            transactions.executeWithoutResult(status -> {
+                jdbcTemplate.update("insert into projects (id, owner_id, title) values (?, ?, ?)", projectId, user.get().id(), projectTitle);
+                pipelineService.seed(projectId);
+            });
         } catch (IOException | DataAccessException exception) {
             try {
                 projectFiles.deleteProject(projectId);
@@ -93,7 +104,7 @@ public class ProjectController {
         }
 
         Timestamp createdAt = jdbcTemplate.queryForObject("select created_at from projects where id = ?", Timestamp.class, projectId);
-        return ResponseEntity.status(201).body(new ProjectDetail(projectId, projectTitle, createdAt.toInstant(), "Draft", 0, TOTAL_STEPS, canonicalBookText));
+        return ResponseEntity.status(201).body(detail(projectId, projectTitle, createdAt, canonicalBookText));
     }
 
     @GetMapping("/{projectId}")
@@ -108,7 +119,7 @@ public class ProjectController {
 
         try {
             ProjectRow row = project.get();
-            return ResponseEntity.ok(new ProjectDetail(row.id(), row.title(), row.createdAt().toInstant(), "Draft", 0, TOTAL_STEPS, projectFiles.readBook(row.id())));
+            return ResponseEntity.ok(detail(row.id(), row.title(), row.createdAt(), projectFiles.readBook(row.id())));
         } catch (IOException | IllegalArgumentException exception) {
             return ResponseEntity.internalServerError().body(Map.of("message", "Book text is unavailable."));
         }
@@ -125,8 +136,14 @@ public class ProjectController {
         return text;
     }
 
-    private ProjectSummary summary(String id, String title, Timestamp createdAt) {
-        return new ProjectSummary(id, title, createdAt.toInstant(), "Draft", 0, TOTAL_STEPS);
+    private ProjectSummary summary(ProjectRow project) {
+        PipelineService.ProjectPipeline pipeline = pipelineService.pipeline(project.id());
+        return new ProjectSummary(project.id(), project.title(), project.createdAt().toInstant(), pipeline.status(), pipeline.completedSteps(), pipeline.totalSteps());
+    }
+
+    private ProjectDetail detail(String id, String title, Timestamp createdAt, String bookText) {
+        PipelineService.ProjectPipeline pipeline = pipelineService.pipeline(id);
+        return new ProjectDetail(id, title, createdAt.toInstant(), pipeline.status(), pipeline.completedSteps(), pipeline.totalSteps(), bookText, pipeline.steps());
     }
 
     private ResponseEntity<Map<String, String>> unauthorized() {
@@ -144,5 +161,5 @@ public class ProjectController {
         }
     }
     private record ProjectSummary(String id, String title, Instant createdAt, String status, int completedSteps, int totalSteps) { }
-    private record ProjectDetail(String id, String title, Instant createdAt, String status, int completedSteps, int totalSteps, String bookText) { }
+    private record ProjectDetail(String id, String title, Instant createdAt, String status, int completedSteps, int totalSteps, String bookText, List<PipelineService.StepView> steps) { }
 }
