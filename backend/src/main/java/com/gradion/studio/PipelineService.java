@@ -7,6 +7,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -14,6 +18,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 class PipelineService {
+    private static final Logger log = LoggerFactory.getLogger(PipelineService.class);
     enum StepKey {
         STYLE(1), CHARACTERS(2), PORTRAITS(3), CHAPTERS(4), ILLUSTRATIONS(5);
 
@@ -35,7 +40,7 @@ class PipelineService {
     enum State { PENDING, RUNNING, COMPLETED, FAILED }
 
     record StepView(String key, State state, boolean canRun, boolean canRetry, boolean canRecover, String error) { }
-    record ProjectPipeline(String status, int completedSteps, int totalSteps, List<StepView> steps) { }
+    record ProjectPipeline(String status, int completedSteps, int totalSteps, List<StepView> steps, String style, List<CharacterView> characters) { }
     record Result(ProjectPipeline pipeline, String message, boolean notFound) {
         static Result success(ProjectPipeline pipeline) { return new Result(pipeline, null, false); }
         static Result conflict(String message) { return new Result(null, message, false); }
@@ -45,6 +50,9 @@ class PipelineService {
     private final JdbcTemplate jdbcTemplate;
     private final TransactionTemplate transactions;
     private final FakePipelineExecutor executor;
+    private final GeminiGateway gemini;
+    private final ProjectFiles projectFiles;
+    private final ObjectMapper json;
     private final Duration staleAfter;
     private final String instanceId;
 
@@ -52,11 +60,17 @@ class PipelineService {
             JdbcTemplate jdbcTemplate,
             TransactionTemplate transactions,
             FakePipelineExecutor executor,
+            GeminiGateway gemini,
+            ProjectFiles projectFiles,
+            ObjectMapper json,
             @Value("${gradion.pipeline.stale-after:PT5M}") Duration staleAfter,
             @Value("${gradion.pipeline.instance-id:}") String configuredInstanceId) {
         this.jdbcTemplate = jdbcTemplate;
         this.transactions = transactions;
         this.executor = executor;
+        this.gemini = gemini;
+        this.projectFiles = projectFiles;
+        this.json = json;
         this.staleAfter = staleAfter;
         this.instanceId = configuredInstanceId.isBlank() ? UUID.randomUUID().toString() : configuredInstanceId;
     }
@@ -85,21 +99,115 @@ class PipelineService {
                     row.error));
         }
         String status = completed == 0 ? "Draft" : completed == StepKey.values().length ? "Done" : "In progress";
-        return new ProjectPipeline(status, completed, StepKey.values().length, steps);
+        String style = jdbcTemplate.queryForObject("select style from projects where id = ?", String.class, projectId);
+        List<CharacterView> characters = jdbcTemplate.query("select name, prompt from characters where project_id = ? order by position",
+                (resultSet, rowNum) -> new CharacterView(resultSet.getString("name"), resultSet.getString("prompt")), projectId);
+        return new ProjectPipeline(status, completed, StepKey.values().length, steps, style, characters);
     }
 
-    Result run(long ownerId, String projectId, StepKey requested) {
+    Result run(long ownerId, String projectId, StepKey requested, String suppliedStyle) {
         Claim claim = transactions.execute(status -> claim(ownerId, projectId, requested));
         if (claim.notFound) return Result.missing();
         if (claim.message != null) return Result.conflict(claim.message);
 
         try {
-            executor.execute();
+            execute(projectId, requested, suppliedStyle);
             finish(projectId, requested, claim.runToken, State.COMPLETED, null);
         } catch (RuntimeException exception) {
+            log.warn("Pipeline step {} failed for project {} ({}): {}", requested, projectId,
+                    exception.getClass().getSimpleName(), exception.getMessage());
             finish(projectId, requested, claim.runToken, State.FAILED, "Pipeline execution failed.");
         }
         return Result.success(pipeline(projectId));
+    }
+
+    private void execute(String projectId, StepKey step, String suppliedStyle) {
+        if (step == StepKey.STYLE) {
+            String style = suppliedStyle == null ? "" : suppliedStyle.trim();
+            if (!style.isBlank()) {
+                jdbcTemplate.update("update projects set style = ?, gemini_style_interaction_id = null where id = ?", style, projectId);
+                return;
+            }
+            ProjectContext context = ensureBookContext(projectId);
+            GeminiGateway.Interaction result = gemini.generateStyle(context.rootInteractionId);
+            if (result.text() == null || result.text().isBlank()) throw new IllegalStateException("Gemini returned no style.");
+            jdbcTemplate.update("update projects set style = ?, gemini_style_interaction_id = ? where id = ?", result.text().trim(), result.id(), projectId);
+            return;
+        }
+        if (step == StepKey.CHARACTERS) {
+            ProjectContext context = ensureStyleContext(projectId);
+            GeminiGateway.Interaction result = gemini.generateCharacters(context.styleInteractionId);
+            List<CharacterInput> characters = parseCharacters(result.text());
+            transactions.executeWithoutResult(status -> {
+                jdbcTemplate.update("delete from characters where project_id = ?", projectId);
+                for (int index = 0; index < characters.size(); index++) {
+                    CharacterInput character = characters.get(index);
+                    jdbcTemplate.update("insert into characters (id, project_id, position, name, prompt) values (?, ?, ?, ?, ?)",
+                            UUID.randomUUID().toString(), projectId, index + 1, character.name, character.prompt);
+                }
+                jdbcTemplate.update("update projects set gemini_characters_interaction_id = ? where id = ?", result.id(), projectId);
+            });
+            return;
+        }
+        executor.execute();
+    }
+
+    private ProjectContext ensureStyleContext(String projectId) {
+        ProjectContext context = ensureBookContext(projectId);
+        if (context.style == null || context.style.isBlank()) throw new IllegalStateException("Style is unavailable.");
+        if (context.styleInteractionId != null && gemini.isAvailable(context.file(), context.styleInteractionId)) return context;
+        GeminiGateway.Interaction styleContext = gemini.createStyleContext(context.rootInteractionId, context.style);
+        jdbcTemplate.update("update projects set gemini_style_interaction_id = ? where id = ?", styleContext.id(), projectId);
+        return loadProjectContext(projectId);
+    }
+
+    private ProjectContext ensureBookContext(String projectId) {
+        ProjectContext context = loadProjectContext(projectId);
+        if (context.file() != null && context.rootInteractionId != null && gemini.isAvailable(context.file(), context.rootInteractionId)) return context;
+        GeminiGateway.FileReference file = gemini.uploadBook(projectFiles.bookPath(projectId));
+        jdbcTemplate.update("update projects set gemini_file_name = ?, gemini_file_uri = ?, gemini_root_interaction_id = null, gemini_style_interaction_id = null where id = ?",
+                file.name(), file.uri(), projectId);
+        GeminiGateway.Interaction root = gemini.createBookContext(file);
+        jdbcTemplate.update("update projects set gemini_root_interaction_id = ? where id = ?", root.id(), projectId);
+        return loadProjectContext(projectId);
+    }
+
+    private ProjectContext loadProjectContext(String projectId) {
+        return jdbcTemplate.queryForObject("select style, gemini_file_name, gemini_file_uri, gemini_root_interaction_id, gemini_style_interaction_id from projects where id = ?",
+                (resultSet, rowNum) -> new ProjectContext(resultSet.getString("style"), resultSet.getString("gemini_file_name"), resultSet.getString("gemini_file_uri"),
+                        resultSet.getString("gemini_root_interaction_id"), resultSet.getString("gemini_style_interaction_id")), projectId);
+    }
+
+    private List<CharacterInput> parseCharacters(String text) {
+        try {
+            JsonNode parsed = json.readTree(stripJsonFence(text == null ? "" : text));
+            if (parsed.isTextual()) parsed = json.readTree(stripJsonFence(parsed.asText()));
+            if (parsed.isTextual()) parsed = json.readTree(stripJsonFence(parsed.asText()));
+            JsonNode characters = parsed.isArray() ? parsed : parsed.path("characters");
+            if (!characters.isArray() || characters.size() < 1 || characters.size() > 2) throw new IllegalStateException("Gemini returned invalid characters.");
+            List<CharacterInput> result = new ArrayList<>();
+            for (JsonNode character : characters) {
+                String name = character.path("name").asText().trim();
+                String prompt = character.path("prompt").asText();
+                if (prompt.isBlank()) prompt = character.path("portrait_prompt").asText();
+                prompt = prompt.trim();
+                if (!character.path("adult").asBoolean(false) || name.isBlank() || prompt.isBlank()) throw new IllegalStateException("Gemini returned invalid characters.");
+                result.add(new CharacterInput(name, prompt));
+            }
+            return result;
+        } catch (Exception exception) {
+            String detail = text == null ? "" : text.replaceAll("[\\r\\n]+", " ").trim();
+            if (detail.length() > 300) detail = detail.substring(0, 300) + "…";
+            throw new IllegalStateException("Gemini returned invalid characters: " + detail, exception);
+        }
+    }
+
+    private String stripJsonFence(String value) {
+        String trimmed = value.trim();
+        if (!trimmed.startsWith("```")) return trimmed;
+        int firstLine = trimmed.indexOf('\n');
+        int lastFence = trimmed.lastIndexOf("```");
+        return firstLine >= 0 && lastFence > firstLine ? trimmed.substring(firstLine + 1, lastFence).trim() : trimmed;
     }
 
     Result recover(long ownerId, String projectId, StepKey requested) {
@@ -166,6 +274,13 @@ class PipelineService {
     }
 
     private record StepRow(StepKey key, State state, String runToken, String executorInstanceId, Timestamp startedAt, String error) { }
+    private record ProjectContext(String style, String fileName, String fileUri, String rootInteractionId, String styleInteractionId) {
+        GeminiGateway.FileReference file() {
+            return fileName == null || fileUri == null ? null : new GeminiGateway.FileReference(fileName, fileUri);
+        }
+    }
+    private record CharacterInput(String name, String prompt) { }
+    record CharacterView(String name, String prompt) { }
     private record Claim(String runToken, String message, boolean notFound) {
         static Claim claimed(String runToken) { return new Claim(runToken, null, false); }
         static Claim conflict(String message) { return new Claim(null, message, false); }

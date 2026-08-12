@@ -41,6 +41,10 @@ class ProjectFiles {
         return Files.readString(projectDirectory(projectId).resolve("book.txt"), StandardCharsets.UTF_8);
     }
 
+    Path bookPath(String projectId) {
+        return projectDirectory(projectId).resolve("book.txt");
+    }
+
     void deleteProject(String projectId) throws IOException {
         Path directory = projectDirectory(projectId);
         Files.deleteIfExists(directory.resolve("book.txt"));

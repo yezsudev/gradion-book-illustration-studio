@@ -20,7 +20,24 @@ create table if not exists projects (
     constraint fk_projects_owner foreign key (owner_id) references users(id)
 );
 
+alter table projects add column if not exists style varchar(2000);
+alter table projects add column if not exists gemini_file_name varchar(200);
+alter table projects add column if not exists gemini_file_uri varchar(1000);
+alter table projects add column if not exists gemini_root_interaction_id varchar(500);
+alter table projects add column if not exists gemini_style_interaction_id varchar(500);
+alter table projects add column if not exists gemini_characters_interaction_id varchar(500);
+
 create index if not exists idx_projects_owner_created on projects(owner_id, created_at);
+
+create table if not exists characters (
+    id varchar(36) primary key,
+    project_id varchar(36) not null,
+    position integer not null,
+    name varchar(200) not null,
+    prompt varchar(4000) not null,
+    constraint fk_characters_project foreign key (project_id) references projects(id),
+    constraint uq_characters_position unique (project_id, position)
+);
 
 create table if not exists project_steps (
     project_id varchar(36) not null,

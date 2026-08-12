@@ -4,6 +4,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -22,12 +23,13 @@ class PipelineController {
     }
 
     @PostMapping("/run")
-    ResponseEntity<?> run(@PathVariable String projectId, @PathVariable String step, HttpServletRequest request) {
+    ResponseEntity<?> run(@PathVariable String projectId, @PathVariable String step, @RequestBody(required = false) RunRequest body, HttpServletRequest request) {
         Optional<CurrentUser.User> user = currentUser.find(request);
         if (user.isEmpty()) return unauthorized();
         PipelineService.StepKey requested = PipelineService.StepKey.parse(step);
         if (requested == null) return badRequest("Unknown pipeline step.");
-        return response(pipelineService.run(user.get().id(), projectId, requested));
+        if (requested != PipelineService.StepKey.STYLE && body != null && body.style() != null && !body.style().isBlank()) return badRequest("Only STYLE accepts a style input.");
+        return response(pipelineService.run(user.get().id(), projectId, requested, body == null ? null : body.style()));
     }
 
     @PostMapping("/recover")
@@ -52,4 +54,6 @@ class PipelineController {
     private ResponseEntity<Map<String, String>> badRequest(String message) {
         return ResponseEntity.badRequest().body(Map.of("message", message));
     }
+
+    private record RunRequest(String style) { }
 }

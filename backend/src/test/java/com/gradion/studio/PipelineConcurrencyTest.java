@@ -9,11 +9,16 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -32,10 +37,17 @@ class PipelineConcurrencyTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @MockBean
+    private GeminiGateway geminiGateway;
+
     @Test
     void concurrentRunRequestsAllowOnlyOneClaim() throws Exception {
         Cookie owner = signIn();
         String projectId = createProject(owner);
+        when(geminiGateway.isAvailable(any(), anyString())).thenReturn(false);
+        when(geminiGateway.uploadBook(any())).thenReturn(new GeminiGateway.FileReference("files/book", "gemini://book"));
+        when(geminiGateway.createBookContext(any())).thenReturn(new GeminiGateway.Interaction("root", "Ready"));
+        doAnswer(invocation -> { Thread.sleep(2_000); return new GeminiGateway.Interaction("style", "Watercolor"); }).when(geminiGateway).generateStyle("root");
         ExecutorService executor = Executors.newSingleThreadExecutor();
         try {
             Future<Integer> first = executor.submit(() -> mockMvc.perform(post("/api/projects/{id}/steps/STYLE/run", projectId).cookie(owner))

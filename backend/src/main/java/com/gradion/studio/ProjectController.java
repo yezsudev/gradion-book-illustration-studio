@@ -50,8 +50,8 @@ public class ProjectController {
         Optional<CurrentUser.User> user = currentUser.find(request);
         if (user.isEmpty()) return unauthorized();
         List<ProjectRow> projects = jdbcTemplate.query(
-                "select id, title, created_at from projects where owner_id = ? order by created_at desc",
-                (resultSet, rowNum) -> new ProjectRow(resultSet.getString("id"), resultSet.getString("title"), resultSet.getTimestamp("created_at")),
+            "select id, title, created_at, style from projects where owner_id = ? order by created_at desc",
+                (resultSet, rowNum) -> new ProjectRow(resultSet.getString("id"), resultSet.getString("title"), resultSet.getTimestamp("created_at"), resultSet.getString("style")),
                 user.get().id());
         return ResponseEntity.ok(projects.stream().map(this::summary).toList());
     }
@@ -112,14 +112,14 @@ public class ProjectController {
         Optional<CurrentUser.User> user = currentUser.find(request);
         if (user.isEmpty()) return unauthorized();
         Optional<ProjectRow> project = jdbcTemplate.query(
-                "select id, title, created_at from projects where id = ? and owner_id = ?",
-                (resultSet, rowNum) -> new ProjectRow(resultSet.getString("id"), resultSet.getString("title"), resultSet.getTimestamp("created_at")),
+                "select id, title, created_at, style from projects where id = ? and owner_id = ?",
+                (resultSet, rowNum) -> new ProjectRow(resultSet.getString("id"), resultSet.getString("title"), resultSet.getTimestamp("created_at"), resultSet.getString("style")),
                 projectId, user.get().id()).stream().findFirst();
         if (project.isEmpty()) return ResponseEntity.notFound().build();
 
         try {
             ProjectRow row = project.get();
-            return ResponseEntity.ok(detail(row.id(), row.title(), row.createdAt(), projectFiles.readBook(row.id())));
+            return ResponseEntity.ok(detail(row.id(), row.title(), row.createdAt(), projectFiles.readBook(row.id()), row.style()));
         } catch (IOException | IllegalArgumentException exception) {
             return ResponseEntity.internalServerError().body(Map.of("message", "Book text is unavailable."));
         }
@@ -143,7 +143,17 @@ public class ProjectController {
 
     private ProjectDetail detail(String id, String title, Timestamp createdAt, String bookText) {
         PipelineService.ProjectPipeline pipeline = pipelineService.pipeline(id);
-        return new ProjectDetail(id, title, createdAt.toInstant(), pipeline.status(), pipeline.completedSteps(), pipeline.totalSteps(), bookText, pipeline.steps());
+        return new ProjectDetail(id, title, createdAt.toInstant(), pipeline.status(), pipeline.completedSteps(), pipeline.totalSteps(), bookText, pipeline.steps(), null, characters(id));
+    }
+
+    private ProjectDetail detail(String id, String title, Timestamp createdAt, String bookText, String style) {
+        PipelineService.ProjectPipeline pipeline = pipelineService.pipeline(id);
+        return new ProjectDetail(id, title, createdAt.toInstant(), pipeline.status(), pipeline.completedSteps(), pipeline.totalSteps(), bookText, pipeline.steps(), style, characters(id));
+    }
+
+    private List<CharacterView> characters(String projectId) {
+        return jdbcTemplate.query("select name, prompt from characters where project_id = ? order by position",
+                (resultSet, rowNum) -> new CharacterView(resultSet.getString("name"), resultSet.getString("prompt")), projectId);
     }
 
     private ResponseEntity<Map<String, String>> unauthorized() {
@@ -154,12 +164,13 @@ public class ProjectController {
         return ResponseEntity.badRequest().body(Map.of("message", message));
     }
 
-    private record ProjectRow(String id, String title, Timestamp createdAt) { }
+    private record ProjectRow(String id, String title, Timestamp createdAt, String style) { }
     private static class InvalidUploadException extends Exception {
         InvalidUploadException(String message) {
             super(message);
         }
     }
     private record ProjectSummary(String id, String title, Instant createdAt, String status, int completedSteps, int totalSteps) { }
-    private record ProjectDetail(String id, String title, Instant createdAt, String status, int completedSteps, int totalSteps, String bookText, List<PipelineService.StepView> steps) { }
+    private record ProjectDetail(String id, String title, Instant createdAt, String status, int completedSteps, int totalSteps, String bookText, List<PipelineService.StepView> steps, String style, List<CharacterView> characters) { }
+    private record CharacterView(String name, String prompt) { }
 }
