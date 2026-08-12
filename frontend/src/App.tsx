@@ -116,7 +116,7 @@ export default function App() {
         const projectId = new URLSearchParams(
           window.location.hash.slice(1),
         ).get("project");
-        if (projectId) openProject(projectId);
+        if (projectId) openProject(projectId, false);
       })
       .catch((cause) => {
         setProjectError(
@@ -125,6 +125,21 @@ export default function App() {
         setProjects([]);
       });
   }, [user]);
+  useEffect(() => {
+    function handleHistory() {
+      const projectId = new URLSearchParams(window.location.hash.slice(1)).get(
+        "project",
+      );
+      if (projectId) {
+        openProject(projectId, false);
+      } else {
+        setSelectedProject(undefined);
+        setView("list");
+      }
+    }
+    window.addEventListener("popstate", handleHistory);
+    return () => window.removeEventListener("popstate", handleHistory);
+  }, []);
   useEffect(() => {
     const projectId = selectedProject?.id;
     if (
@@ -227,11 +242,11 @@ export default function App() {
     }
   }
 
-  async function openProject(id: string) {
+  async function openProject(id: string, updateHistory = true) {
     setSelectedProject(undefined);
     setStepAction(null);
     setView("detail");
-    window.history.replaceState({}, "", `#project=${id}`);
+    if (updateHistory) window.history.pushState({}, "", `#project=${id}`);
     try {
       setSelectedProject(await getProject(id));
     } catch (cause) {

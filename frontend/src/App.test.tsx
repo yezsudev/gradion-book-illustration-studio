@@ -800,6 +800,14 @@ test("shows illustration failure state", async () => {
   expect(screen.getByText("Illustration generation failed.")).toBeInTheDocument();
 });
 
+test("browser back returns from project detail to the project list", async () => {
+  vi.stubGlobal("fetch", projectFetch({ steps: pipelineSteps("PENDING", "PENDING", "PENDING", "PENDING", "PENDING") }));
+  render(<App />);
+  await openProject();
+  window.history.back();
+  await waitFor(() => expect(screen.getByRole("heading", { name: "Your projects" })).toBeInTheDocument());
+});
+
 function projectFetch(project: Record<string, unknown>) {
   return vi.fn((url: string, init?: RequestInit) => {
     if (url === "/api/session")
