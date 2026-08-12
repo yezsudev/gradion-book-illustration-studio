@@ -18,7 +18,7 @@ STYLE -> CHARACTERS -> PORTRAITS -> CHAPTERS -> ILLUSTRATIONS
 - At most two adult characters and exactly one chapter.
 - Ownership-checked portrait and illustration media endpoints.
 
-There are no passwords, OAuth, queues, workers, schedulers, SSE, WebSockets, automatic retries, or Gemini image calls. The configured Hugging Face Nscale endpoint is text-to-image only, so illustration prompts reuse persisted style and character appearance descriptions instead of sending portrait bytes as references.
+There are no passwords, OAuth, queues, workers, schedulers, SSE, WebSockets, or automatic retries. Gemini is used for text generation. Image generation is selected with `IMAGE_PROVIDER=gemini` or `IMAGE_PROVIDER=huggingface`.
 
 ## Prerequisites
 
@@ -35,10 +35,21 @@ Copy `.env.example` to `.env` at the repository root:
 ```env
 GEMINI_API_KEY=your_gemini_key
 GEMINI_MODEL=gemini-2.5-flash-lite
+GEMINI_IMAGE_MODEL=gemini-2.5-flash-image
+IMAGE_PROVIDER=huggingface
 HF_TOKEN=your_huggingface_token
 HF_PROVIDER=nscale
 HF_IMAGE_MODEL=black-forest-labs/FLUX.1-schnell
 ```
+
+`IMAGE_PROVIDER=gemini` uses `POST /v1/models/{GEMINI_IMAGE_MODEL}:generateContent`
+with the `x-goog-api-key` header and `responseModalities: ["TEXT", "IMAGE"]`.
+The default `GEMINI_IMAGE_MODEL` is `gemini-2.5-flash-image` (Nano Banana), and
+the gateway reads the returned `inlineData` bytes. `IMAGE_PROVIDER=huggingface`
+uses the configured FLUX Inference Provider. The existing image gateway contract is unchanged, so
+PORTRAITS and ILLUSTRATIONS keep their current persistence and retry behavior.
+Illustration prompts currently include the persisted style and character
+appearance descriptions; portrait image bytes are not sent as remote references.
 
 `npm run start` loads `.env` and passes it to both applications. Never commit `.env` or keys.
 
