@@ -79,3 +79,90 @@ test('enters the empty project list after a successful identity response', async
   expect(screen.getByText(/mira@example\.com/)).toBeInTheDocument();
   expect(screen.getByText('No projects yet.')).toBeInTheDocument();
 });
+
+test('shows the empty project list with a create-project entry point', async () => {
+  vi.stubGlobal('fetch', vi.fn((url: string) => {
+    if (url === '/api/session') return Promise.resolve({ ok: true, status: 200, json: async () => ({ name: 'Mira Hassan', email: 'mira@example.com' }) });
+    if (url === '/api/projects') return Promise.resolve({ ok: true, status: 200, json: async () => [] });
+    if (url === '/api/health') return Promise.resolve({ ok: true, status: 200, json: async () => ({ status: 'ok' }) });
+    return Promise.reject(new Error(`Unexpected request: ${url}`));
+  }));
+
+  render(<App />);
+
+  expect(await screen.findByText('No projects yet.')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Create project' })).toBeInTheDocument();
+});
+
+test('validates that a new project has a title and one book source', async () => {
+  vi.stubGlobal('fetch', vi.fn((url: string) => {
+    if (url === '/api/session') return Promise.resolve({ ok: true, status: 200, json: async () => ({ name: 'Mira Hassan', email: 'mira@example.com' }) });
+    if (url === '/api/projects') return Promise.resolve({ ok: true, status: 200, json: async () => [] });
+    if (url === '/api/health') return Promise.resolve({ ok: true, status: 200, json: async () => ({ status: 'ok' }) });
+    return Promise.reject(new Error(`Unexpected request: ${url}`));
+  }));
+
+  render(<App />);
+  await screen.findByRole('button', { name: 'Create project' });
+  fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+
+  expect(screen.getByRole('alert')).toHaveTextContent('Enter a project title.');
+});
+
+test('shows creation loading while a new project is being saved', async () => {
+  vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+    if (url === '/api/session') return Promise.resolve({ ok: true, status: 200, json: async () => ({ name: 'Mira Hassan', email: 'mira@example.com' }) });
+    if (url === '/api/projects' && init?.method === 'POST') {
+      return new Promise(() => undefined);
+    }
+    if (url === '/api/projects') return Promise.resolve({ ok: true, status: 200, json: async () => [] });
+    if (url === '/api/health') return Promise.resolve({ ok: true, status: 200, json: async () => ({ status: 'ok' }) });
+    return Promise.reject(new Error(`Unexpected request: ${url}`));
+  }));
+
+  render(<App />);
+  await screen.findByRole('button', { name: 'Create project' });
+  fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+  fireEvent.change(screen.getByLabelText('Project title'), { target: { value: 'River Book' } });
+  fireEvent.change(screen.getByLabelText('Paste book text'), { target: { value: 'A complete book.' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+  expect(screen.getByRole('button', { name: 'Creating project…' })).toBeDisabled();
+});
+
+test('shows a backend error when new project creation is rejected', async () => {
+  vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+    if (url === '/api/session') return Promise.resolve({ ok: true, status: 200, json: async () => ({ name: 'Mira Hassan', email: 'mira@example.com' }) });
+    if (url === '/api/projects' && init?.method === 'POST') return Promise.resolve({ ok: false, status: 400, json: async () => ({ message: 'Book text is required.' }) });
+    if (url === '/api/projects') return Promise.resolve({ ok: true, status: 200, json: async () => [] });
+    if (url === '/api/health') return Promise.resolve({ ok: true, status: 200, json: async () => ({ status: 'ok' }) });
+    return Promise.reject(new Error(`Unexpected request: ${url}`));
+  }));
+
+  render(<App />);
+  await screen.findByRole('button', { name: 'Create project' });
+  fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+  fireEvent.change(screen.getByLabelText('Project title'), { target: { value: 'River Book' } });
+  fireEvent.change(screen.getByLabelText('Paste book text'), { target: { value: 'A complete book.' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Book text is required.');
+});
+
+test('navigates to project detail after creating a project', async () => {
+  vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+    if (url === '/api/session') return Promise.resolve({ ok: true, status: 200, json: async () => ({ name: 'Mira Hassan', email: 'mira@example.com' }) });
+    if (url === '/api/projects' && init?.method === 'POST') return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'project-1', title: 'River Book', createdAt: '2026-08-12T00:00:00Z', status: 'Draft', completedSteps: 0, totalSteps: 5, bookText: 'A complete book.' }) });
+    if (url === '/api/projects') return Promise.resolve({ ok: true, status: 200, json: async () => [] });
+    if (url === '/api/health') return Promise.resolve({ ok: true, status: 200, json: async () => ({ status: 'ok' }) });
+    return Promise.reject(new Error(`Unexpected request: ${url}`));
+  }));
+
+  render(<App />);
+  await screen.findByRole('button', { name: 'Create project' });
+  fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+  fireEvent.change(screen.getByLabelText('Project title'), { target: { value: 'River Book' } });
+  fireEvent.change(screen.getByLabelText('Paste book text'), { target: { value: 'A complete book.' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+  expect(await screen.findByRole('heading', { name: 'River Book' })).toBeInTheDocument();
+  expect(screen.getByText('A complete book.')).toBeInTheDocument();
+});

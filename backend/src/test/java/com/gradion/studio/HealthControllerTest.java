@@ -10,7 +10,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "spring.datasource.url=jdbc:h2:mem:health;DB_CLOSE_DELAY=-1",
+        "spring.sql.init.mode=always"
+})
 @AutoConfigureMockMvc
 class HealthControllerTest {
     @Autowired

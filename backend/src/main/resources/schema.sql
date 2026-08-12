@@ -11,3 +11,13 @@ create table if not exists sessions (
     created_at timestamp not null default current_timestamp,
     constraint fk_sessions_user foreign key (user_id) references users(id)
 );
+
+create table if not exists projects (
+    id varchar(36) primary key,
+    owner_id bigint not null,
+    title varchar(200) not null,
+    created_at timestamp not null default current_timestamp,
+    constraint fk_projects_owner foreign key (owner_id) references users(id)
+);
+
+create index if not exists idx_projects_owner_created on projects(owner_id, created_at);

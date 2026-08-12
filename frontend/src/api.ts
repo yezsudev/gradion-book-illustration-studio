@@ -2,6 +2,15 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
 
 export type HealthResponse = { status: string };
 export type Identity = { name: string; email: string };
+export type ProjectSummary = {
+  id: string;
+  title: string;
+  createdAt: string;
+  status: 'Draft';
+  completedSteps: number;
+  totalSteps: number;
+};
+export type ProjectDetail = ProjectSummary & { bookText: string };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, { credentials: 'include', ...init });
@@ -23,4 +32,12 @@ export function createSession(name: string, email: string): Promise<Identity> {
   });
 }
 export function deleteSession(): Promise<void> { return request<void>('/session', { method: 'DELETE' }); }
-export function getProjects(): Promise<unknown[]> { return request<unknown[]>('/projects'); }
+export function getProjects(): Promise<ProjectSummary[]> { return request<ProjectSummary[]>('/projects'); }
+export function getProject(id: string): Promise<ProjectDetail> { return request<ProjectDetail>(`/projects/${id}`); }
+export function createProject(title: string, bookText: string, file: File | null): Promise<ProjectDetail> {
+  const form = new FormData();
+  form.append('title', title);
+  if (bookText.trim()) form.append('bookText', bookText);
+  if (file) form.append('file', file);
+  return request<ProjectDetail>('/projects', { method: 'POST', body: form });
+}
