@@ -40,7 +40,7 @@ class PipelineService {
     enum State { PENDING, RUNNING, COMPLETED, FAILED }
 
     record StepView(String key, State state, boolean canRun, boolean canRetry, boolean canRecover, String error) { }
-    record ProjectPipeline(String status, int completedSteps, int totalSteps, List<StepView> steps, String style, List<CharacterView> characters, ChapterView chapter) { }
+    record ProjectPipeline(String status, int completedSteps, int totalSteps, List<StepView> steps, String style, List<CharacterView> characters, ChapterView chapter, IllustrationView illustration) { }
     record Result(ProjectPipeline pipeline, String message, boolean notFound) {
         static Result success(ProjectPipeline pipeline) { return new Result(pipeline, null, false); }
         static Result conflict(String message) { return new Result(null, message, false); }
@@ -106,10 +106,11 @@ class PipelineService {
         List<CharacterView> characters = jdbcTemplate.query("select id, name, prompt, portrait_status, portrait_path, portrait_error from characters where project_id = ? order by position",
                 (resultSet, rowNum) -> new CharacterView(resultSet.getString("id"), resultSet.getString("name"), resultSet.getString("prompt"),
                         resultSet.getString("portrait_status"), resultSet.getString("portrait_path") == null ? null : "/api/projects/" + projectId + "/media/" + resultSet.getString("id"), resultSet.getString("portrait_error")), projectId);
-        ChapterView chapter = jdbcTemplate.query("select id, title, prompt from chapters where project_id = ?",
-                (resultSet, rowNum) -> new ChapterView(resultSet.getString("id"), resultSet.getString("title"), resultSet.getString("prompt")), projectId)
+        ChapterView chapter = jdbcTemplate.query("select id, title, prompt, illustration_status, illustration_path, illustration_error from chapters where project_id = ?",
+                (resultSet, rowNum) -> new ChapterView(resultSet.getString("id"), resultSet.getString("title"), resultSet.getString("prompt"), resultSet.getString("illustration_status"), resultSet.getString("illustration_path") == null ? null : "/api/projects/" + projectId + "/illustrations/" + resultSet.getString("id"), resultSet.getString("illustration_error")), projectId)
                 .stream().findFirst().orElse(null);
-        return new ProjectPipeline(status, completed, StepKey.values().length, steps, style, characters, chapter);
+        IllustrationView illustration = chapter == null ? null : new IllustrationView(chapter.id, chapter.illustrationStatus, chapter.illustrationUrl, chapter.illustrationError);
+        return new ProjectPipeline(status, completed, StepKey.values().length, steps, style, characters, chapter, illustration);
     }
 
     Result run(long ownerId, String projectId, StepKey requested, String suppliedStyle) {
@@ -186,6 +187,28 @@ class PipelineService {
                 jdbcTemplate.update("insert into chapters (id, project_id, title, prompt, interaction_id) values (?, ?, ?, ?, ?)",
                         UUID.randomUUID().toString(), projectId, chapter.title, chapter.prompt, result.id());
             });
+            return;
+        }
+        if (step == StepKey.ILLUSTRATIONS) {
+            ChapterRow chapter = jdbcTemplate.queryForObject("select id, title, prompt, illustration_status, illustration_path from chapters where project_id = ?",
+                    (resultSet, rowNum) -> new ChapterRow(resultSet.getString("id"), resultSet.getString("title"), resultSet.getString("prompt"), resultSet.getString("illustration_status"), resultSet.getString("illustration_path")), projectId);
+            if (chapter == null) throw new IllegalStateException("Chapter is unavailable.");
+            if ("COMPLETED".equals(chapter.status) && chapter.path != null) return;
+            ProjectContext context = loadProjectContext(projectId);
+            List<CharacterRow> characters = jdbcTemplate.query("select name, prompt from characters where project_id = ? order by position",
+                    (resultSet, rowNum) -> new CharacterRow(null, resultSet.getString("name"), resultSet.getString("prompt"), null, null, null), projectId);
+            String names = characters.stream().map(character -> character.name + ": " + character.prompt).reduce((a, b) -> a + "; " + b).orElse("No named characters");
+            String prompt = "Style: " + context.style + "\nChapter: " + chapter.title + "\nScene: " + chapter.prompt + "\nCharacter appearances: " + names;
+            jdbcTemplate.update("update chapters set illustration_status = 'RUNNING', illustration_error = null where id = ?", chapter.id);
+            try {
+                ImageGenerationGateway.ImageResult result = imageGateway.generateIllustration(prompt);
+                projectFiles.writeIllustration(projectId, chapter.id, result.bytes());
+                jdbcTemplate.update("update chapters set illustration_status = 'COMPLETED', illustration_path = ?, illustration_error = null, illustration_generated_at = current_timestamp, illustration_request_id = ? where id = ?",
+                        "illustrations/" + chapter.id + ".png", result.id(), chapter.id);
+            } catch (RuntimeException | java.io.IOException exception) {
+                jdbcTemplate.update("update chapters set illustration_status = 'FAILED', illustration_error = ? where id = ?", safeError(exception), chapter.id);
+                throw exception instanceof RuntimeException runtime ? runtime : new IllegalStateException("Could not persist illustration.", exception);
+            }
             return;
         }
         executor.execute();
@@ -355,9 +378,11 @@ class PipelineService {
     }
     private record CharacterInput(String name, String prompt) { }
     private record ChapterInput(String title, String prompt) { }
+    private record ChapterRow(String id, String title, String prompt, String status, String path) { }
     private record CharacterRow(String id, String name, String prompt, String portraitStatus, String portraitPath, String portraitInteractionId) { }
     record CharacterView(String id, String name, String prompt, String portraitStatus, String portraitUrl, String portraitError) { }
-    record ChapterView(String id, String title, String prompt) { }
+    record ChapterView(String id, String title, String prompt, String illustrationStatus, String illustrationUrl, String illustrationError) { }
+    record IllustrationView(String id, String status, String illustrationUrl, String error) { }
     private record Claim(String runToken, String message, boolean notFound) {
         static Claim claimed(String runToken) { return new Claim(runToken, null, false); }
         static Claim conflict(String message) { return new Claim(null, message, false); }

@@ -545,6 +545,10 @@ export default function App() {
                 <h3>{selectedProject.chapter.title}</h3>
                 <p>{selectedProject.chapter.prompt}</p>
               </article>
+              {selectedProject.illustration?.status === "COMPLETED" && selectedProject.illustration.illustrationUrl && (
+                <img src={selectedProject.illustration.illustrationUrl} alt={`${selectedProject.chapter.title} illustration`} />
+              )}
+              {selectedProject.illustration?.status === "FAILED" && <p role="alert" className="error">{selectedProject.illustration.error || "Illustration generation failed."}</p>}
             </section>
           )}
         </section>

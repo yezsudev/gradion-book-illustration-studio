@@ -66,6 +66,27 @@ class ProjectFiles {
         return Files.readAllBytes(portraitPath(projectId, characterId));
     }
 
+    void writeIllustration(String projectId, String chapterId, byte[] bytes) throws IOException {
+        Path directory = projectDirectory(projectId).resolve("illustrations");
+        Files.createDirectories(directory);
+        Path temporary = Files.createTempFile(directory, "illustration-", ".tmp");
+        Path illustration = illustrationPath(projectId, chapterId);
+        try {
+            Files.write(temporary, bytes, StandardOpenOption.TRUNCATE_EXISTING);
+            try { Files.move(temporary, illustration, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING); }
+            catch (AtomicMoveNotSupportedException ignored) { Files.move(temporary, illustration, StandardCopyOption.REPLACE_EXISTING); }
+        } finally { Files.deleteIfExists(temporary); }
+    }
+
+    byte[] readIllustration(String projectId, String chapterId) throws IOException {
+        return Files.readAllBytes(illustrationPath(projectId, chapterId));
+    }
+
+    Path illustrationPath(String projectId, String chapterId) {
+        UUID.fromString(chapterId);
+        return projectDirectory(projectId).resolve("illustrations").resolve(chapterId + ".png").normalize();
+    }
+
     Path portraitPath(String projectId, String characterId) {
         UUID.fromString(characterId);
         return projectDirectory(projectId).resolve("portraits").resolve(characterId + ".png").normalize();

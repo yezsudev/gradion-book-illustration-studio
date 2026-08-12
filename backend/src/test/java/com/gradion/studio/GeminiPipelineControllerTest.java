@@ -292,6 +292,58 @@ class GeminiPipelineControllerTest {
     }
 
     @Test
+    void illustrationsAreBlockedUntilChapterCompletes() throws Exception {
+        Cookie owner = signIn("illustrations-order@example.com");
+        String projectId = createProject(owner, "Illustration order");
+        completeCharactersAndPortraits(owner, projectId, "characters-illustration-order", "Mole");
+        mockMvc.perform(post("/api/projects/{id}/steps/ILLUSTRATIONS/run", projectId).cookie(owner))
+                .andExpect(status().isConflict());
+        verify(imageGateway, never()).generateIllustration(anyString());
+    }
+
+    @Test
+    void illustrationPersistsImageExposesUrlAndChecksOwnership() throws Exception {
+        Cookie owner = signIn("illustrations-success@example.com");
+        Cookie other = signIn("illustrations-other@example.com");
+        String projectId = createProject(owner, "Illustration success");
+        completeCharactersAndPortraits(owner, projectId, "characters-illustration-success", "Mole");
+        when(geminiGateway.isAvailable(any(), anyString())).thenReturn(true);
+        when(geminiGateway.generateChapter("characters-illustration-success"))
+                .thenReturn(new GeminiGateway.Interaction("chapter-illustration-1", "{\"chapters\":[{\"title\":\"River scene\",\"prompt\":\"Mole crosses the river.\"}]}"));
+        mockMvc.perform(post("/api/projects/{id}/steps/CHAPTERS/run", projectId).cookie(owner)).andExpect(status().isOk());
+        String chapterId = jdbcTemplate.queryForObject("select id from chapters where project_id = ?", String.class, projectId);
+        when(imageGateway.generateIllustration(anyString()))
+                .thenReturn(new ImageGenerationGateway.ImageResult("illustration-1", "image/png", new byte[] { 9, 8, 7 }));
+
+        mockMvc.perform(post("/api/projects/{id}/steps/ILLUSTRATIONS/run", projectId).cookie(owner))
+                .andExpect(jsonPath("$.steps[4].state").value("COMPLETED"))
+                .andExpect(jsonPath("$.illustration.illustrationUrl").value("/api/projects/" + projectId + "/illustrations/" + chapterId));
+        mockMvc.perform(get("/api/projects/{id}/illustrations/{chapterId}", projectId, chapterId).cookie(owner))
+                .andExpect(status().isOk()).andExpect(content().bytes(new byte[] { 9, 8, 7 }));
+        mockMvc.perform(get("/api/projects/{id}/illustrations/{chapterId}", projectId, chapterId).cookie(other))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void failedIllustrationPreservesEarlierStepsAndRetryDoesNotDuplicate() throws Exception {
+        Cookie owner = signIn("illustrations-retry@example.com");
+        String projectId = createProject(owner, "Illustration retry");
+        completeCharactersAndPortraits(owner, projectId, "characters-illustration-retry", "Mole");
+        when(geminiGateway.isAvailable(any(), anyString())).thenReturn(true);
+        when(geminiGateway.generateChapter("characters-illustration-retry"))
+                .thenReturn(new GeminiGateway.Interaction("chapter-illustration-2", "{\"chapters\":[{\"title\":\"River scene\",\"prompt\":\"Mole crosses the river.\"}]}"));
+        mockMvc.perform(post("/api/projects/{id}/steps/CHAPTERS/run", projectId).cookie(owner));
+        when(imageGateway.generateIllustration(anyString())).thenThrow(new IllegalStateException("quota"))
+                .thenReturn(new ImageGenerationGateway.ImageResult("illustration-2", "image/png", new byte[] { 1 }));
+        mockMvc.perform(post("/api/projects/{id}/steps/ILLUSTRATIONS/run", projectId).cookie(owner))
+                .andExpect(jsonPath("$.steps[4].state").value("FAILED"));
+        assertThat(jdbcTemplate.queryForObject("select state from project_steps where project_id = ? and step_key = 'CHAPTERS'", String.class, projectId)).isEqualTo("COMPLETED");
+        mockMvc.perform(post("/api/projects/{id}/steps/ILLUSTRATIONS/run", projectId).cookie(owner))
+                .andExpect(jsonPath("$.steps[4].state").value("COMPLETED"));
+        verify(imageGateway, times(2)).generateIllustration(anyString());
+    }
+
+    @Test
     void portraitsPersistEachImageAndExposeAnAuthorizedUrl() throws Exception {
         Cookie owner = signIn("portraits-success@example.com");
         String projectId = createProject(owner, "Portrait success");

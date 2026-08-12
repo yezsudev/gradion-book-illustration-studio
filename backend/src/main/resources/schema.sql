@@ -56,9 +56,20 @@ create table if not exists chapters (
     title varchar(500) not null,
     prompt varchar(4000) not null,
     interaction_id varchar(500),
+    illustration_status varchar(12) not null default 'PENDING',
+    illustration_path varchar(500),
+    illustration_error varchar(500),
+    illustration_generated_at timestamp,
+    illustration_request_id varchar(500),
     constraint fk_chapters_project foreign key (project_id) references projects(id),
     constraint uq_chapters_project unique (project_id)
 );
+
+alter table chapters add column if not exists illustration_status varchar(12) not null default 'PENDING';
+alter table chapters add column if not exists illustration_path varchar(500);
+alter table chapters add column if not exists illustration_error varchar(500);
+alter table chapters add column if not exists illustration_generated_at timestamp;
+alter table chapters add column if not exists illustration_request_id varchar(500);
 
 create table if not exists project_steps (
     project_id varchar(36) not null,

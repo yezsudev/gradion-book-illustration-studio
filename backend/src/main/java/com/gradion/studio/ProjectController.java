@@ -141,6 +141,18 @@ public class ProjectController {
         }
     }
 
+    @GetMapping("/{projectId}/illustrations/{chapterId}")
+    public ResponseEntity<?> illustration(@PathVariable String projectId, @PathVariable String chapterId, HttpServletRequest request) {
+        Optional<CurrentUser.User> user = currentUser.find(request);
+        if (user.isEmpty()) return unauthorized();
+        boolean owned = !jdbcTemplate.query("select c.id from chapters c join projects p on p.id = c.project_id where c.id = ? and c.project_id = ? and p.owner_id = ?",
+                (resultSet, rowNum) -> resultSet.getString(1), chapterId, projectId, user.get().id()).isEmpty();
+        if (!owned) return ResponseEntity.notFound().build();
+        try {
+            return ResponseEntity.ok().contentType(MediaType.IMAGE_PNG).header(HttpHeaders.CACHE_CONTROL, "no-store").body(projectFiles.readIllustration(projectId, chapterId));
+        } catch (IOException | IllegalArgumentException exception) { return ResponseEntity.notFound().build(); }
+    }
+
     private String uploadedText(MultipartFile file) throws IOException, InvalidUploadException {
         if (file == null) return null;
         String filename = file.getOriginalFilename();
@@ -159,12 +171,12 @@ public class ProjectController {
 
     private ProjectDetail detail(String id, String title, Timestamp createdAt, String bookText) {
         PipelineService.ProjectPipeline pipeline = pipelineService.pipeline(id);
-        return new ProjectDetail(id, title, createdAt.toInstant(), pipeline.status(), pipeline.completedSteps(), pipeline.totalSteps(), bookText, pipeline.steps(), null, pipeline.characters(), pipeline.chapter());
+        return new ProjectDetail(id, title, createdAt.toInstant(), pipeline.status(), pipeline.completedSteps(), pipeline.totalSteps(), bookText, pipeline.steps(), null, pipeline.characters(), pipeline.chapter(), pipeline.illustration());
     }
 
     private ProjectDetail detail(String id, String title, Timestamp createdAt, String bookText, String style) {
         PipelineService.ProjectPipeline pipeline = pipelineService.pipeline(id);
-        return new ProjectDetail(id, title, createdAt.toInstant(), pipeline.status(), pipeline.completedSteps(), pipeline.totalSteps(), bookText, pipeline.steps(), style, pipeline.characters(), pipeline.chapter());
+        return new ProjectDetail(id, title, createdAt.toInstant(), pipeline.status(), pipeline.completedSteps(), pipeline.totalSteps(), bookText, pipeline.steps(), style, pipeline.characters(), pipeline.chapter(), pipeline.illustration());
     }
 
     private ResponseEntity<Map<String, String>> unauthorized() {
@@ -182,5 +194,5 @@ public class ProjectController {
         }
     }
     private record ProjectSummary(String id, String title, Instant createdAt, String status, int completedSteps, int totalSteps) { }
-    private record ProjectDetail(String id, String title, Instant createdAt, String status, int completedSteps, int totalSteps, String bookText, List<PipelineService.StepView> steps, String style, List<PipelineService.CharacterView> characters, PipelineService.ChapterView chapter) { }
+    private record ProjectDetail(String id, String title, Instant createdAt, String status, int completedSteps, int totalSteps, String bookText, List<PipelineService.StepView> steps, String style, List<PipelineService.CharacterView> characters, PipelineService.ChapterView chapter, PipelineService.IllustrationView illustration) { }
 }

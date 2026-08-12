@@ -756,6 +756,31 @@ test("shows CHAPTERS failed state with retry action", async () => {
   expect(screen.getByText("Failed")).toBeInTheDocument();
 });
 
+test("shows a completed illustration and full pipeline", async () => {
+  vi.stubGlobal("fetch", projectFetch({
+    status: "Done", completedSteps: 5,
+    chapter: { id: "chapter-1", title: "River scene", prompt: "Mole crosses the river." },
+    illustration: { id: "chapter-1", status: "COMPLETED", illustrationUrl: "/api/projects/project-1/illustrations/chapter-1", error: null },
+    steps: pipelineSteps("COMPLETED", "COMPLETED", "COMPLETED", "COMPLETED", "COMPLETED"),
+  }));
+  render(<App />);
+  await openProject();
+  expect(screen.getByRole("img", { name: "River scene illustration" })).toHaveAttribute("src", "/api/projects/project-1/illustrations/chapter-1");
+  expect(screen.getAllByText("Completed").length).toBeGreaterThan(0);
+});
+
+test("shows illustration failure state", async () => {
+  vi.stubGlobal("fetch", projectFetch({
+    status: "In progress", completedSteps: 4,
+    chapter: { id: "chapter-1", title: "River scene", prompt: "Mole crosses the river." },
+    illustration: { id: "chapter-1", status: "FAILED", illustrationUrl: null, error: "Illustration generation failed." },
+    steps: pipelineSteps("COMPLETED", "COMPLETED", "COMPLETED", "COMPLETED", "FAILED", "Illustration generation failed."),
+  }));
+  render(<App />);
+  await openProject();
+  expect(screen.getByText("Illustration generation failed.")).toBeInTheDocument();
+});
+
 function projectFetch(project: Record<string, unknown>) {
   return vi.fn((url: string, init?: RequestInit) => {
     if (url === "/api/session")

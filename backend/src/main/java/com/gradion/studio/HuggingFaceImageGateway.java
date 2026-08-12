@@ -38,10 +38,19 @@ class HuggingFaceImageGateway implements ImageGenerationGateway {
 
     @Override
     public ImageResult generatePortrait(String name, String prompt) {
+        return generate("Create a portrait of " + name + ". " + prompt);
+    }
+
+    @Override
+    public ImageResult generateIllustration(String prompt) {
+        return generate(prompt);
+    }
+
+    private ImageResult generate(String prompt) {
         if (token == null || token.isBlank()) throw new IllegalStateException("Hugging Face is not configured.");
         try {
             ObjectNode payload = json.createObjectNode();
-            payload.put("prompt", "Create a portrait of " + name + ". " + prompt);
+            payload.put("prompt", prompt);
             payload.put("model", model);
             payload.put("response_format", "b64_json");
             payload.put("size", "512x512");
