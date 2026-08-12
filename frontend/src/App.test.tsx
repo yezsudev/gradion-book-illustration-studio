@@ -563,7 +563,7 @@ test("shows a spinner while a step request is still running", async () => {
   expect(
     await screen.findByRole("button", { name: /Style is running/ }),
   ).toBeDisabled();
-  expect(screen.getByRole("status")).toHaveTextContent("Style is running");
+  expect(screen.getByRole("status")).toHaveTextContent("Generating the visual style from your book’s text");
 });
 
 test("opens the project detail named by the URL after refresh", async () => {
@@ -759,7 +759,7 @@ test("shows CHAPTERS running state", async () => {
 
   render(<App />);
   await openProject();
-  expect(screen.getByRole("status")).toHaveTextContent("Chapters is running");
+  expect(screen.getByRole("status")).toHaveTextContent("Selecting a chapter scene from your book’s text");
 });
 
 test("shows CHAPTERS failed state with retry action", async () => {

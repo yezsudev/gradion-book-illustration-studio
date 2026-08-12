@@ -22,6 +22,21 @@ function stepName(key: ProjectStep["key"]) {
   return key.charAt(0) + key.slice(1).toLowerCase();
 }
 
+function runningMessage(key: ProjectStep["key"]) {
+  switch (key) {
+    case "STYLE":
+      return "Generating the visual style from your book’s text — usually a couple of seconds in this demo, longer for real Gemini calls…";
+    case "CHARACTERS":
+      return "Generating the character list from your book’s text — usually a couple of seconds in this demo, longer for real Gemini calls…";
+    case "PORTRAITS":
+      return "Hugging Face is creating character portraits — this may take a little longer…";
+    case "CHAPTERS":
+      return "Selecting a chapter scene from your book’s text — usually a couple of seconds in this demo, longer for real Gemini calls…";
+    case "ILLUSTRATIONS":
+      return "Hugging Face is creating the illustration — this may take a little longer…";
+  }
+}
+
 function Stepper({
   steps,
   runningStep,
@@ -61,6 +76,10 @@ function createdDate(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
     new Date(value),
   );
+}
+
+function statusClass(status: string) {
+  return status.toLowerCase().replace(/\s+/g, "-");
 }
 
 function readFileText(file: File): Promise<string> {
@@ -155,6 +174,21 @@ export default function App() {
       2000,
     );
     return () => window.clearInterval(timer);
+  }, [selectedProject]);
+  useEffect(() => {
+    if (!selectedProject) return;
+    setProjects((current) =>
+      current?.map((project) =>
+        project.id === selectedProject.id
+          ? {
+              ...project,
+              status: selectedProject.status,
+              completedSteps: selectedProject.completedSteps,
+              totalSteps: selectedProject.totalSteps,
+            }
+          : project,
+      ),
+    );
   }, [selectedProject]);
 
   async function signIn(event: FormEvent) {
@@ -463,11 +497,7 @@ export default function App() {
                       </p>
                       <p role="status" className="running">
                         <span className="spinner" aria-hidden="true" />
-                        {step.key === "PORTRAITS"
-                          ? "Hugging Face is creating portraits..."
-                          : step.key === "ILLUSTRATIONS"
-                            ? "Hugging Face is creating the illustration..."
-                            : `${stepName(step.key)} is running...`}
+                        {runningMessage(step.key)}
                       </p>
                     </div>
                   ))}
@@ -563,11 +593,28 @@ export default function App() {
                     className="project-card"
                     onClick={() => openProject(project.id)}
                   >
-                    <strong>{project.title}</strong>
-                    <span>
-                      {createdDate(project.createdAt)} · {project.status} ·{" "}
-                      {project.completedSteps}/{project.totalSteps} steps
-                    </span>
+                    <div className="project-card-heading">
+                      <strong>{project.title}</strong>
+                      <span className={`status-pill ${statusClass(project.status)}`}>
+                        {project.status}
+                      </span>
+                    </div>
+                    <span>{createdDate(project.createdAt)}</span>
+                    <div
+                      className="project-progress"
+                      role="progressbar"
+                      aria-label={`${project.title} progress`}
+                      aria-valuemin={0}
+                      aria-valuemax={project.totalSteps}
+                      aria-valuenow={project.completedSteps}
+                    >
+                      <span
+                        style={{
+                          width: `${Math.min(100, (project.completedSteps / Math.max(1, project.totalSteps)) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                    <span>{project.completedSteps}/{project.totalSteps} steps complete</span>
                   </button>
                 </li>
               ))}

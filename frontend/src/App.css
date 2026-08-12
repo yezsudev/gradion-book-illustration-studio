@@ -35,7 +35,16 @@ button { width: fit-content; padding: 12px 18px; border: 0; border-radius: 8px; 
 .style-summary { grid-column: 2; grid-row: 1; align-self: start; padding: 20px 16px; border-radius: 14px; background: #f3eee5; }
 .style-summary h2 { margin: 0 0 12px; color: #777; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
 .style-summary p { margin: 0; line-height: 1.6; }
+.project-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.status-pill { width: fit-content; padding: 4px 9px; border-radius: 999px; background: #eee9e6; color: #595959 !important; font-size: 11px !important; font-weight: 800 !important; text-transform: uppercase; letter-spacing: .04em; }
+.status-pill.in-progress { background: #fff0df; color: #b55300 !important; }
+.status-pill.done { background: #e4f3e9; color: #1d7a46 !important; }
+.status-pill.draft { background: #eee9e6; color: #595959 !important; }
+.project-progress { height: 7px; overflow: hidden; border-radius: 999px; background: #e8e2e0; }
+.project-progress span { display: block; height: 100%; border-radius: inherit; background: #ff6b00; transition: width .2s ease; }
+.status-pill + .project-progress { margin-top: 4px; }
 .detail-meta { margin: -8px 0 8px; color: #777; font-size: 13px; }
 .stepper li { position: relative; }
 .stepper li:not(:last-child)::after { content: ""; position: absolute; top: 14px; left: 36px; right: 0; height: 1px; background: #ff6b00; }
+.stepper li.completed:not(:last-child)::after { background: #1d7a46; }
 @media (max-width: 640px) { .topbar { padding: 16px; }.topbar-left, .topbar-account { gap: 10px; }.topbar-account > span:not(.avatar) { display: none; }.project-detail, .generated-results { width: calc(100% - 32px); }.project-detail { padding: 30px 0; }.generated-results { grid-template-columns: 1fr; }.style-summary { grid-column: 1; grid-row: auto; }.stepper li:not(:last-child)::after { display: none; } }
