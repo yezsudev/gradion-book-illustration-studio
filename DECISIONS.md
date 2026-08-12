@@ -38,3 +38,64 @@ current process is not considered abandoned solely because it is slow.
 The cost is additional execution metadata and recovery logic, but it gives
 stronger protection against duplicate external API calls without introducing a
 queue, worker, heartbeat, or distributed lock.
+
+## Keep optional style in the STYLE step
+
+During implementation, AI suggested collecting the optional user-provided style
+when creating a project.
+
+I rejected that approach because project creation only needs the project title
+and book content, while style is part of the first pipeline step. Keeping the
+style input on the project detail screen makes the UI follow the same sequence
+as the pipeline and keeps project creation focused on persistence rather than
+generation options.
+
+If the user provides a style, the application persists and uses it directly
+instead of making a Gemini request only to rewrite or normalize it. If no style
+is supplied, Gemini generates one from the book.
+
+The trade-off is that STYLE has two execution paths, but it avoids an unnecessary
+external API call and keeps the user interaction aligned with the pipeline.
+
+## Gemini for text and Hugging Face FLUX for images
+
+The initial implementation used Gemini for both text and image generation so
+that the application could follow a single AI provider and stay close to the
+reference notebook.
+
+Manual testing showed that the available Gemini Free Tier had zero quota for the
+required image-generation model. The Gemini image integration therefore could
+not be exercised end-to-end without enabling billing.
+
+I kept Gemini for the text stages — STYLE, CHARACTERS, and CHAPTERS — and moved
+image generation for PORTRAITS and ILLUSTRATIONS behind a small image-generation
+boundary implemented with Hugging Face and FLUX.1-schnell.
+
+AI initially suggested a hard-coded Hugging Face `fal-ai` provider route. Real
+integration testing returned `Model not supported by provider fal-ai`, so I did
+not keep that assumption. The provider was made configurable and the working
+provider was verified through a real image-generation request.
+
+This adds a second external AI provider and some configuration overhead, but it
+keeps the text pipeline close to the Gemini notebook while making the full
+five-step flow runnable without requiring paid Gemini image quota.
+
+## Sequential portrait generation instead of background workers
+
+For the PORTRAITS step, two designs were considered: processing portraits
+sequentially inside the existing claimed pipeline execution, or moving image
+generation to background jobs so progress could continue independently of the
+HTTP request.
+
+I chose one PORTRAITS claim with sequential per-character generation. Each
+successful portrait is written atomically and persisted immediately before
+processing the next character.
+
+This means that if the first portrait succeeds and the second fails, the first
+result remains available and retry only needs to process the unfinished
+character.
+
+The trade-off is that the request can remain open while external image
+generation is running. However, the assessment caps the number of characters at
+two, so introducing queues, workers, scheduling, and additional lifecycle
+management would add more complexity than value for this scope.
