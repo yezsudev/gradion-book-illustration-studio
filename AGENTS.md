@@ -25,3 +25,4 @@
 - Inspect related code and tests before changing behavior. Write or update the smallest meaningful frontend and backend tests for every behavioral change.
 - Run the relevant checks before declaring work complete. Never invent test output, AI disagreements, or assessment evidence.
 - Keep commits small and meaningful. Note substantial AI authorship honestly in commit bodies.
+- Do not add entries to DECISIONS.md automatically. Only propose a decision entry after a real trade-off, disagreement, correction, or architectural choice has occurred, and wait for user approval before recording it.

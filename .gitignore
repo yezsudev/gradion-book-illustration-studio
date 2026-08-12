@@ -1,0 +1,12 @@
+node_modules/
+frontend/dist/
+frontend/coverage/
+*.tsbuildinfo
+backend/target/
+data/
+backend/data/
+.env
+*.mv.db
+*.trace.db
+.idea/
+.vscode/

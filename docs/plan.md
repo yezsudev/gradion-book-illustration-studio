@@ -8,7 +8,7 @@ This plan delivers thin end-to-end slices early. Each milestone should leave the
 
 **Goal:** Bootstrap a minimal React/Vite/TypeScript frontend and Spring Boot backend with one root start command and one root test command.
 
-**Likely files:** `package.json`, `scripts/dev.mjs`, `scripts/test.mjs`, `frontend/`, `backend/pom.xml`, `backend/src/main/`, `.gitignore`, `.env.example`, `README.md`.
+**Likely files:** `package.json`, `scripts/start.mjs`, `scripts/test.mjs`, `frontend/`, `backend/pom.xml`, `backend/src/main/`, `.gitignore`, `.env.example`, `README.md`.
 
 **Acceptance criteria:** One command starts both apps; the frontend can call a backend health endpoint; secrets and `data/` are ignored; no Docker or external service is needed.
 
