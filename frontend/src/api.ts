@@ -26,6 +26,7 @@ export type ProjectCharacter = {
   portraitUrl: string | null;
   portraitError: string | null;
 };
+export type ProjectChapter = { id: string; title: string; prompt: string };
 export type ProjectPipeline = Pick<
   ProjectSummary,
   "status" | "completedSteps" | "totalSteps"
@@ -33,12 +34,14 @@ export type ProjectPipeline = Pick<
   steps: ProjectStep[];
   style?: string | null;
   characters?: ProjectCharacter[];
+  chapter?: ProjectChapter | null;
 };
 export type ProjectDetail = ProjectSummary & {
   bookText: string;
   steps: ProjectStep[];
   style: string | null;
   characters: ProjectCharacter[];
+  chapter: ProjectChapter | null;
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

@@ -538,6 +538,15 @@ export default function App() {
               </div>
             </section>
           )}
+          {selectedProject.chapter && (
+            <section>
+              <h2>Chapter</h2>
+              <article>
+                <h3>{selectedProject.chapter.title}</h3>
+                <p>{selectedProject.chapter.prompt}</p>
+              </article>
+            </section>
+          )}
         </section>
       )}
     </main>

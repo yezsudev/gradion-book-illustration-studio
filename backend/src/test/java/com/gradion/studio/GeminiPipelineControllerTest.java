@@ -206,6 +206,92 @@ class GeminiPipelineControllerTest {
     }
 
     @Test
+    void chaptersAreBlockedUntilPortraitsComplete() throws Exception {
+        Cookie owner = signIn("chapters-order@example.com");
+        String projectId = createProject(owner, "Chapter order");
+        completeCharacters(owner, projectId, "characters-chapter-order", "Mole");
+
+        mockMvc.perform(post("/api/projects/{id}/steps/CHAPTERS/run", projectId).cookie(owner))
+                .andExpect(status().isConflict());
+        verify(geminiGateway, never()).generateChapter(anyString());
+    }
+
+    @Test
+    void chapterOutputPersistsExactlyOneChapterAndIsReturnedInProjectDetail() throws Exception {
+        Cookie owner = signIn("chapters-success@example.com");
+        String projectId = createProject(owner, "Chapter success");
+        completeCharactersAndPortraits(owner, projectId, "characters-chapter-success", "Mole");
+        when(geminiGateway.isAvailable(any(), anyString())).thenReturn(true);
+        when(geminiGateway.generateChapter("characters-chapter-success"))
+                .thenReturn(new GeminiGateway.Interaction("chapter-1", "{\"chapters\":[{\"title\":\"The river crossing\",\"prompt\":\"Mole crosses the moonlit river.\"}]}"));
+
+        mockMvc.perform(post("/api/projects/{id}/steps/CHAPTERS/run", projectId).cookie(owner))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.steps[3].state").value("COMPLETED"))
+                .andExpect(jsonPath("$.chapter.title").value("The river crossing"))
+                .andExpect(jsonPath("$.chapter.prompt").value("Mole crosses the moonlit river."));
+        assertThat(jdbcTemplate.queryForObject("select count(*) from chapters where project_id = ?", Integer.class, projectId)).isEqualTo(1);
+        mockMvc.perform(get("/api/projects/{id}", projectId).cookie(owner))
+                .andExpect(jsonPath("$.chapter.title").value("The river crossing"));
+    }
+
+    @Test
+    void invalidChapterOutputFailsWithoutInventingOrTruncating() throws Exception {
+        Cookie owner = signIn("chapters-invalid@example.com");
+        String projectId = createProject(owner, "Chapter invalid");
+        completeCharactersAndPortraits(owner, projectId, "characters-chapter-invalid", "Mole");
+        when(geminiGateway.isAvailable(any(), anyString())).thenReturn(true);
+        when(geminiGateway.generateChapter("characters-chapter-invalid"))
+                .thenReturn(new GeminiGateway.Interaction("bad-1", "{\"chapters\":[]}"))
+                .thenReturn(new GeminiGateway.Interaction("good-1", "{\"chapters\":[{\"title\":\"A scene\",\"prompt\":\"A prompt\"}]}"));
+
+        mockMvc.perform(post("/api/projects/{id}/steps/CHAPTERS/run", projectId).cookie(owner))
+                .andExpect(jsonPath("$.steps[3].state").value("FAILED"));
+        assertThat(jdbcTemplate.queryForObject("select count(*) from chapters where project_id = ?", Integer.class, projectId)).isZero();
+        mockMvc.perform(post("/api/projects/{id}/steps/CHAPTERS/run", projectId).cookie(owner))
+                .andExpect(jsonPath("$.steps[3].state").value("COMPLETED"));
+    }
+
+    @Test
+    void blankChapterFieldsAndMultipleChaptersFail() throws Exception {
+        Cookie owner = signIn("chapters-fields@example.com");
+        String projectId = createProject(owner, "Chapter fields");
+        completeCharactersAndPortraits(owner, projectId, "characters-chapter-fields", "Mole");
+        when(geminiGateway.isAvailable(any(), anyString())).thenReturn(true);
+        when(geminiGateway.generateChapter("characters-chapter-fields"))
+                .thenReturn(new GeminiGateway.Interaction("bad-1", "{\"chapters\":[{\"title\":\"\",\"prompt\":\"scene\"}]}"))
+                .thenReturn(new GeminiGateway.Interaction("bad-2", "{\"chapters\":[{\"title\":\"One\",\"prompt\":\"scene\"},{\"title\":\"Two\",\"prompt\":\"scene\"}]}"));
+
+        mockMvc.perform(post("/api/projects/{id}/steps/CHAPTERS/run", projectId).cookie(owner))
+                .andExpect(jsonPath("$.steps[3].state").value("FAILED"));
+        mockMvc.perform(post("/api/projects/{id}/steps/CHAPTERS/run", projectId).cookie(owner))
+                .andExpect(jsonPath("$.steps[3].state").value("FAILED"));
+    }
+
+    @Test
+    void duplicateChapterRunInvokesGeminiOnceAndOwnershipIsEnforced() throws Exception {
+        Cookie owner = signIn("chapters-duplicate@example.com");
+        Cookie other = signIn("chapters-other@example.com");
+        String projectId = createProject(owner, "Chapter duplicate");
+        completeCharactersAndPortraits(owner, projectId, "characters-chapter-duplicate", "Mole");
+        when(geminiGateway.isAvailable(any(), anyString())).thenReturn(true);
+        doAnswer(invocation -> { Thread.sleep(500); return new GeminiGateway.Interaction("chapter-1", "{\"chapters\":[{\"title\":\"Scene\",\"prompt\":\"Prompt\"}]}" ); })
+                .when(geminiGateway).generateChapter("characters-chapter-duplicate");
+
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<Integer> first = executor.submit(() -> mockMvc.perform(post("/api/projects/{id}/steps/CHAPTERS/run", projectId).cookie(owner)).andReturn().getResponse().getStatus());
+            waitUntilRunning(projectId, "CHAPTERS");
+            mockMvc.perform(post("/api/projects/{id}/steps/CHAPTERS/run", projectId).cookie(owner)).andExpect(status().isConflict());
+            mockMvc.perform(post("/api/projects/{id}/steps/CHAPTERS/run", projectId).cookie(other)).andExpect(status().isNotFound());
+            assertThat(first.get()).isEqualTo(200);
+            verify(geminiGateway, times(1)).generateChapter("characters-chapter-duplicate");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     void portraitsPersistEachImageAndExposeAnAuthorizedUrl() throws Exception {
         Cookie owner = signIn("portraits-success@example.com");
         String projectId = createProject(owner, "Portrait success");
@@ -287,6 +373,13 @@ class GeminiPipelineControllerTest {
                 .thenReturn(new GeminiGateway.Interaction(interactionId, output.toString()));
         mockMvc.perform(post("/api/projects/{id}/steps/CHARACTERS/run", projectId).cookie(owner))
                 .andExpect(status().isOk());
+    }
+
+    private void completeCharactersAndPortraits(Cookie owner, String projectId, String interactionId, String... names) throws Exception {
+        completeCharacters(owner, projectId, interactionId, names);
+        when(imageGateway.generatePortrait(anyString(), anyString())).thenAnswer(invocation ->
+                new ImageGenerationGateway.ImageResult("portrait-" + invocation.getArgument(0), "image/png", new byte[] { 1, 2, 3 }));
+        mockMvc.perform(post("/api/projects/{id}/steps/PORTRAITS/run", projectId).cookie(owner)).andExpect(status().isOk());
     }
 
     private void completeCustomStyle(Cookie owner, String projectId) throws Exception {

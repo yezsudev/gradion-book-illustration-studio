@@ -159,12 +159,12 @@ public class ProjectController {
 
     private ProjectDetail detail(String id, String title, Timestamp createdAt, String bookText) {
         PipelineService.ProjectPipeline pipeline = pipelineService.pipeline(id);
-        return new ProjectDetail(id, title, createdAt.toInstant(), pipeline.status(), pipeline.completedSteps(), pipeline.totalSteps(), bookText, pipeline.steps(), null, pipeline.characters());
+        return new ProjectDetail(id, title, createdAt.toInstant(), pipeline.status(), pipeline.completedSteps(), pipeline.totalSteps(), bookText, pipeline.steps(), null, pipeline.characters(), pipeline.chapter());
     }
 
     private ProjectDetail detail(String id, String title, Timestamp createdAt, String bookText, String style) {
         PipelineService.ProjectPipeline pipeline = pipelineService.pipeline(id);
-        return new ProjectDetail(id, title, createdAt.toInstant(), pipeline.status(), pipeline.completedSteps(), pipeline.totalSteps(), bookText, pipeline.steps(), style, pipeline.characters());
+        return new ProjectDetail(id, title, createdAt.toInstant(), pipeline.status(), pipeline.completedSteps(), pipeline.totalSteps(), bookText, pipeline.steps(), style, pipeline.characters(), pipeline.chapter());
     }
 
     private ResponseEntity<Map<String, String>> unauthorized() {
@@ -182,5 +182,5 @@ public class ProjectController {
         }
     }
     private record ProjectSummary(String id, String title, Instant createdAt, String status, int completedSteps, int totalSteps) { }
-    private record ProjectDetail(String id, String title, Instant createdAt, String status, int completedSteps, int totalSteps, String bookText, List<PipelineService.StepView> steps, String style, List<PipelineService.CharacterView> characters) { }
+    private record ProjectDetail(String id, String title, Instant createdAt, String status, int completedSteps, int totalSteps, String bookText, List<PipelineService.StepView> steps, String style, List<PipelineService.CharacterView> characters, PipelineService.ChapterView chapter) { }
 }

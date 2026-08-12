@@ -13,4 +13,5 @@ interface GeminiGateway {
     Interaction generateStyle(String rootInteractionId);
     Interaction generateCharacters(String styleInteractionId);
     Interaction createCharactersContext(String styleInteractionId, String characters);
+    Interaction generateChapter(String charactersInteractionId);
 }

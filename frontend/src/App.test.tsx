@@ -714,6 +714,48 @@ test("shows a failed portrait error", async () => {
   expect(screen.getByRole("alert")).toHaveTextContent("Portrait generation failed.");
 });
 
+test("shows the selected chapter after CHAPTERS completes", async () => {
+  vi.stubGlobal("fetch", projectFetch({
+    status: "In progress",
+    completedSteps: 4,
+    chapter: { id: "chapter-1", title: "The river crossing", prompt: "Mole crosses the moonlit river." },
+    steps: pipelineSteps("COMPLETED", "COMPLETED", "COMPLETED", "COMPLETED", "PENDING"),
+  }));
+
+  render(<App />);
+  await openProject();
+
+  expect(screen.getByRole("heading", { name: "Chapter" })).toBeInTheDocument();
+  expect(screen.getByText("The river crossing")).toBeInTheDocument();
+  expect(screen.getByText("Mole crosses the moonlit river.")).toBeInTheDocument();
+  expect(screen.getByText("Illustrations")).toBeInTheDocument();
+});
+
+test("shows CHAPTERS running state", async () => {
+  vi.stubGlobal("fetch", projectFetch({
+    status: "In progress",
+    completedSteps: 3,
+    steps: pipelineSteps("COMPLETED", "COMPLETED", "COMPLETED", "RUNNING", "PENDING"),
+  }));
+
+  render(<App />);
+  await openProject();
+  expect(screen.getByText(/Chapters is running/)).toBeInTheDocument();
+});
+
+test("shows CHAPTERS failed state with retry action", async () => {
+  vi.stubGlobal("fetch", projectFetch({
+    status: "In progress",
+    completedSteps: 3,
+    steps: pipelineSteps("COMPLETED", "COMPLETED", "COMPLETED", "FAILED", "PENDING", "Chapter generation failed."),
+  }));
+
+  render(<App />);
+  await openProject();
+  expect(screen.getByText("Chapters")).toBeInTheDocument();
+  expect(screen.getByText("Failed")).toBeInTheDocument();
+});
+
 function projectFetch(project: Record<string, unknown>) {
   return vi.fn((url: string, init?: RequestInit) => {
     if (url === "/api/session")

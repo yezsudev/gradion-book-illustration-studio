@@ -40,7 +40,7 @@ class PipelineService {
     enum State { PENDING, RUNNING, COMPLETED, FAILED }
 
     record StepView(String key, State state, boolean canRun, boolean canRetry, boolean canRecover, String error) { }
-    record ProjectPipeline(String status, int completedSteps, int totalSteps, List<StepView> steps, String style, List<CharacterView> characters) { }
+    record ProjectPipeline(String status, int completedSteps, int totalSteps, List<StepView> steps, String style, List<CharacterView> characters, ChapterView chapter) { }
     record Result(ProjectPipeline pipeline, String message, boolean notFound) {
         static Result success(ProjectPipeline pipeline) { return new Result(pipeline, null, false); }
         static Result conflict(String message) { return new Result(null, message, false); }
@@ -106,7 +106,10 @@ class PipelineService {
         List<CharacterView> characters = jdbcTemplate.query("select id, name, prompt, portrait_status, portrait_path, portrait_error from characters where project_id = ? order by position",
                 (resultSet, rowNum) -> new CharacterView(resultSet.getString("id"), resultSet.getString("name"), resultSet.getString("prompt"),
                         resultSet.getString("portrait_status"), resultSet.getString("portrait_path") == null ? null : "/api/projects/" + projectId + "/media/" + resultSet.getString("id"), resultSet.getString("portrait_error")), projectId);
-        return new ProjectPipeline(status, completed, StepKey.values().length, steps, style, characters);
+        ChapterView chapter = jdbcTemplate.query("select id, title, prompt from chapters where project_id = ?",
+                (resultSet, rowNum) -> new ChapterView(resultSet.getString("id"), resultSet.getString("title"), resultSet.getString("prompt")), projectId)
+                .stream().findFirst().orElse(null);
+        return new ProjectPipeline(status, completed, StepKey.values().length, steps, style, characters, chapter);
     }
 
     Result run(long ownerId, String projectId, StepKey requested, String suppliedStyle) {
@@ -174,7 +177,30 @@ class PipelineService {
             }
             return;
         }
+        if (step == StepKey.CHAPTERS) {
+            ProjectContext context = ensureCharactersContext(projectId);
+            GeminiGateway.Interaction result = gemini.generateChapter(context.charactersInteractionId);
+            ChapterInput chapter = parseChapter(result.text());
+            transactions.executeWithoutResult(status -> {
+                jdbcTemplate.update("delete from chapters where project_id = ?", projectId);
+                jdbcTemplate.update("insert into chapters (id, project_id, title, prompt, interaction_id) values (?, ?, ?, ?, ?)",
+                        UUID.randomUUID().toString(), projectId, chapter.title, chapter.prompt, result.id());
+            });
+            return;
+        }
         executor.execute();
+    }
+
+    private ProjectContext ensureCharactersContext(String projectId) {
+        ProjectContext context = ensureStyleContext(projectId);
+        if (context.charactersInteractionId != null && gemini.isAvailable(context.file(), context.charactersInteractionId)) return context;
+        List<CharacterRow> characters = jdbcTemplate.query("select name, prompt from characters where project_id = ? order by position",
+                (resultSet, rowNum) -> new CharacterRow(null, resultSet.getString("name"), resultSet.getString("prompt"), null, null, null), projectId);
+        if (characters.isEmpty()) throw new IllegalStateException("Characters are unavailable.");
+        String descriptions = characters.stream().map(character -> character.name + ": " + character.prompt).reduce((left, right) -> left + "\\n" + right).orElse("");
+        GeminiGateway.Interaction rebuilt = gemini.createCharactersContext(context.styleInteractionId, descriptions);
+        jdbcTemplate.update("update projects set gemini_characters_interaction_id = ? where id = ?", rebuilt.id(), projectId);
+        return loadProjectContext(projectId);
     }
 
     private ProjectContext ensureStyleContext(String projectId) {
@@ -224,6 +250,24 @@ class PipelineService {
             String detail = text == null ? "" : text.replaceAll("[\\r\\n]+", " ").trim();
             if (detail.length() > 300) detail = detail.substring(0, 300) + "…";
             throw new IllegalStateException("Gemini returned invalid characters: " + detail, exception);
+        }
+    }
+
+    private ChapterInput parseChapter(String text) {
+        try {
+            JsonNode parsed = json.readTree(stripJsonFence(text == null ? "" : text));
+            if (parsed.isTextual()) parsed = json.readTree(stripJsonFence(parsed.asText()));
+            JsonNode chapters = parsed.isArray() ? parsed : parsed.path("chapters");
+            if (!chapters.isArray() || chapters.size() != 1) throw new IllegalStateException("Gemini returned invalid chapter.");
+            JsonNode chapter = chapters.get(0);
+            String title = chapter.path("title").asText("").trim();
+            String prompt = chapter.path("prompt").asText("").trim();
+            if (title.isBlank() || prompt.isBlank()) throw new IllegalStateException("Gemini returned invalid chapter.");
+            return new ChapterInput(title, prompt);
+        } catch (Exception exception) {
+            String detail = text == null ? "" : text.replaceAll("[\\r\\n]+", " ").trim();
+            if (detail.length() > 300) detail = detail.substring(0, 300) + "鈥?";
+            throw new IllegalStateException("Gemini returned invalid chapter: " + detail, exception);
         }
     }
 
@@ -310,8 +354,10 @@ class PipelineService {
         }
     }
     private record CharacterInput(String name, String prompt) { }
+    private record ChapterInput(String title, String prompt) { }
     private record CharacterRow(String id, String name, String prompt, String portraitStatus, String portraitPath, String portraitInteractionId) { }
     record CharacterView(String id, String name, String prompt, String portraitStatus, String portraitUrl, String portraitError) { }
+    record ChapterView(String id, String title, String prompt) { }
     private record Claim(String runToken, String message, boolean notFound) {
         static Claim claimed(String runToken) { return new Claim(runToken, null, false); }
         static Claim conflict(String message) { return new Claim(null, message, false); }

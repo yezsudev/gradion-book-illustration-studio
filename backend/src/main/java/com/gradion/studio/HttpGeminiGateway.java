@@ -121,6 +121,24 @@ class HttpGeminiGateway implements GeminiGateway {
         return interaction(styleInteractionId, userContent(content), null);
     }
 
+    @Override
+    public Interaction generateChapter(String charactersInteractionId) {
+        ArrayNode content = json.createArrayNode();
+        content.addObject().put("type", "text").put("text", "Select exactly one scene from the book to illustrate. Use the persisted adult character descriptions where useful. Return one concise chapter title and a detailed illustration prompt.");
+        ObjectNode schema = json.createObjectNode();
+        schema.put("type", "array").put("minItems", 1).put("maxItems", 1);
+        ObjectNode item = schema.putObject("items");
+        item.put("type", "object");
+        ObjectNode properties = item.putObject("properties");
+        properties.putObject("title").put("type", "string");
+        properties.putObject("prompt").put("type", "string");
+        item.putArray("required").add("title").add("prompt");
+        item.put("additionalProperties", false);
+        ObjectNode format = json.createObjectNode();
+        format.put("type", "text").put("mime_type", "application/json").set("schema", schema);
+        return interaction(charactersInteractionId, userContent(content), format);
+    }
+
 
     private ArrayNode userContent(ArrayNode parts) {
         ObjectNode step = json.createObjectNode();

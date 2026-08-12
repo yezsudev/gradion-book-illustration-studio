@@ -50,6 +50,16 @@ alter table characters add column if not exists portrait_error varchar(500);
 alter table characters add column if not exists portrait_generated_at timestamp;
 alter table characters add column if not exists portrait_interaction_id varchar(500);
 
+create table if not exists chapters (
+    id varchar(36) primary key,
+    project_id varchar(36) not null,
+    title varchar(500) not null,
+    prompt varchar(4000) not null,
+    interaction_id varchar(500),
+    constraint fk_chapters_project foreign key (project_id) references projects(id),
+    constraint uq_chapters_project unique (project_id)
+);
+
 create table if not exists project_steps (
     project_id varchar(36) not null,
     step_key varchar(20) not null,
